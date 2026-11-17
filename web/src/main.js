@@ -32,7 +32,7 @@ scene.add(hemi);
 
 const world = new THREE.Group();
 scene.add(world);
-const layers = { buildings: new THREE.Group(), roads: new THREE.Group(), water: new THREE.Group(), trees: new THREE.Group(), rails: new THREE.Group(), poi: new THREE.Group(), terrain: new THREE.Group(), misc: new THREE.Group() };
+const layers = { buildings: new THREE.Group(), roads: new THREE.Group(), water: new THREE.Group(), trees: new THREE.Group(), rails: new THREE.Group(), traffic: new THREE.Group(), poi: new THREE.Group(), terrain: new THREE.Group(), misc: new THREE.Group() };
 for (const g of Object.values(layers)) world.add(g);
 
 // ------------------------------------------------------------------ data
@@ -390,19 +390,26 @@ function densify(pts, step) {
   }
   out.push(pts[pts.length - 1]); return out;
 }
-const nodeKey = (x, y) => `${Math.round(x * 2)},${Math.round(y * 2)}`;
-const bridgeEnds = new Map(); // node -> {bridge:int, other:int}
-function regEnd(p, isBridge) { const k = nodeKey(p[0], p[1]); const e = bridgeEnds.get(k) || { b: 0, o: 0 }; isBridge ? e.b++ : e.o++; bridgeEnds.set(k, e); }
+const nodeKey = (x, y) => `${Math.round(x * 5)},${Math.round(y * 5)}`;
+const bridgeEnds = new Map(); // node -> {b, o, maxLy}
+function regEnd(p, isBridge, ly) {
+  const k = nodeKey(p[0], p[1]);
+  const e = bridgeEnds.get(k) || { b: 0, o: 0, maxLy: 0 };
+  if (isBridge) { e.b++; e.maxLy = Math.max(e.maxLy, ly || 1); }
+  else { e.o++; }
+  bridgeEnds.set(k, e);
+}
 const R = roads.map((r) => ({ ...r, pts: (() => { const a = []; for (let i = 0; i < r.p.length; i += 2) a.push([r.p[i], r.p[i + 1]]); return a; })() }));
-for (const r of R) { regEnd(r.pts[0], !!r.br); regEnd(r.pts[r.pts.length - 1], !!r.br); }
+for (const r of R) { regEnd(r.pts[0], !!r.br, r.ly); regEnd(r.pts[r.pts.length - 1], !!r.br, r.ly); }
 const railsL = rails.map((r) => { const a = []; for (let i = 0; i < r.p.length; i += 2) a.push([r.p[i], r.p[i + 1]]); return { ...r, pts: a, br: r.bridge && r.bridge !== 'no', tn: r.tunnel && r.tunnel !== 'no' }; });
-for (const r of railsL) { regEnd(r.pts[0], !!r.br); regEnd(r.pts[r.pts.length - 1], !!r.br); }
+for (const r of railsL) { regEnd(r.pts[0], !!r.br, r.ly); regEnd(r.pts[r.pts.length - 1], !!r.br, r.ly); }
 
-function deckHeight(pt, layer) {
-  const k = nodeKey(pt[0], pt[1]); const e = bridgeEnds.get(k) || { b: 0, o: 0 };
+function deckHeight(pt) {
+  const k = nodeKey(pt[0], pt[1]);
+  const e = bridgeEnds.get(k) || { b: 0, o: 0, maxLy: 1 };
   const g = ground(pt[0], pt[1]);
-  if (e.o > 0) return g + 0.15; // meets normal road: ramp starts at ground
-  const lift = Math.max(5.5, (layer || 1) * 6.0);
+  if (e.o > 0) return g + 0.15; // meets normal road: ramp starts seamlessly at ground
+  const lift = Math.max(5.5, (e.maxLy || 1) * 5.5);
   return (g <= wl + 0.6 ? wl + 11 : g + lift);
 }
 
@@ -449,16 +456,17 @@ const PATHS = new Set(['footway', 'path', 'steps', 'cycleway', 'pedestrian', 'tr
 const bucket = { main: new Map(), minor: new Map(), path: new Map(), side: new Map(), rail: new Map() };
 const push = (m, k, g) => { if (!g) return; if (!m.has(k)) m.set(k, []); m.get(k).push(g); };
 const piers = [];
+const trafficPaths = [];
 
 function addLine(r, kind) {
   if (r.tn) return;
   let pts = densify(r.pts, 8);
   const isBr = !!r.br && (r.pts.length > 1);
   let yfun;
+  const total = (() => { let d = 0; for (let i = 1; i < pts.length; i++) d += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return d; })();
   if (isBr) {
-    const total = (() => { let d = 0; for (let i = 1; i < pts.length; i++) d += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); return d; })();
-    const h0 = deckHeight(r.pts[0], r.ly), h1 = deckHeight(r.pts[r.pts.length - 1], r.ly);
-    yfun = (p, i, dist) => { const t = total > 0 ? dist / total : 0; const s = t * t * (3 - 2 * t); return h0 + (h1 - h0) * s; };
+    const h0 = deckHeight(r.pts[0]), h1 = deckHeight(r.pts[r.pts.length - 1]);
+    yfun = (p, i, dist) => { const t = total > 0 ? dist / total : 0; const s = t * t * (3 - 2 * t); return Math.max(h0 + (h1 - h0) * s, ground(p[0], p[1]) + 0.25); };
   } else {
     const dy = kind === 'path' ? 0.2 : kind === 'rail' ? 0.25 : 0.12 + (MAIN.has(r.c) ? 0.03 : 0);
     yfun = (p) => ground(p[0], p[1]) + dy;
@@ -466,6 +474,14 @@ function addLine(r, kind) {
   const w = r.w || 3;
   const g = ribbon(pts, w, yfun, kind === 'main' ? 14 : 20);
   if (!g) return;
+  if (kind === 'main' && total >= 45 && trafficPaths.length < 700) {
+    const pts3 = []; let d = 0;
+    for (let i = 0; i < pts.length; i++) {
+      if (i > 0) d += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      pts3.push([pts[i][0], yfun(pts[i], i, d) + 0.75, -pts[i][1], d]);
+    }
+    trafficPaths.push({ pts: pts3, len: d, ow: !!r.ow });
+  }
   const cx = pts[0][0], cy = pts[0][1], k = cellKey(cx, cy);
   push(bucket[kind], k, g);
   if (isBr) {
@@ -520,6 +536,29 @@ flushBucket(bucket.rail, matRail, layers.rails, false);
 if (piers.length) {
   const geos = piers.map((p) => { const g = new THREE.BoxGeometry(p.w, p.y1 - p.y0, p.w * 1.4); g.translate(p.x, (p.y0 + p.y1) / 2, p.z); g.deleteAttribute('uv'); return g; });
   const m = mergeGeometries(geos, false); layers.roads.add(new THREE.Mesh(m, matBridgeSide));
+}
+
+// ------------------------------------------------------------------ animated traffic (cars on roads & flyovers)
+const cars = [];
+let carMesh = null;
+if (trafficPaths.length) {
+  const N_CARS = 450;
+  const carGeo = new THREE.BoxGeometry(1.9, 1.35, 4.2);
+  const carMat = new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.25 });
+  carMesh = new THREE.InstancedMesh(carGeo, carMat, N_CARS);
+  const CAR_COLS = [0xe8ecf0, 0x2c343d, 0x7b8694, 0xc43b33, 0x2c669e, 0xd9a834, 0x4b7862];
+  const c = new THREE.Color();
+  for (let i = 0; i < N_CARS; i++) {
+    const pathIdx = i % trafficPaths.length;
+    const tp = trafficPaths[pathIdx];
+    const dir = tp.ow ? 1 : (i % 2 === 0 ? 1 : -1);
+    cars.push({ path: tp, t: (i * 0.6180339) % 1, sp: (10 + (i % 7) * 2.2) * dir, off: dir * 1.7 });
+    c.setHex(CAR_COLS[i % CAR_COLS.length]);
+    carMesh.setColorAt(i, c);
+  }
+  carMesh.instanceColor.needsUpdate = true;
+  carMesh.frustumCulled = false;
+  layers.traffic.add(carMesh);
 }
 
 // ------------------------------------------------------------------ trees (instanced, chunked)
@@ -648,7 +687,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 });
 
 // ------------------------------------------------------------------ UI
-for (const k of ['buildings', 'roads', 'water', 'trees', 'rails', 'poi']) $('L_' + k).addEventListener('change', (e) => (layers[k].visible = e.target.checked));
+for (const k of ['buildings', 'roads', 'water', 'trees', 'rails', 'traffic', 'poi']) $('L_' + k).addEventListener('change', (e) => (layers[k].visible = e.target.checked));
 $('quality').addEventListener('change', (e) => applyQuality(e.target.value));
 $('basemap').addEventListener('change', (e) => {
   const mat = layers.terrain.userData.mat;
@@ -716,6 +755,29 @@ function frame(now) {
   // tree distance culling
   const tr = layers.trees.userData.range || 2000;
   if (layers.trees.visible) for (const c of layers.trees.userData.chunks) { c.visible = c.userData.center.distanceTo(camera.position) < tr + 700; }
+  // animated traffic update
+  if (carMesh && layers.traffic.visible) {
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < cars.length; i++) {
+      const ca = cars[i], tp = ca.path;
+      ca.t = (ca.t + (ca.sp * dt) / tp.len + 1) % 1;
+      const targetD = ca.t * tp.len;
+      const pts = tp.pts;
+      let idx = 0;
+      while (idx < pts.length - 2 && pts[idx + 1][3] < targetD) idx++;
+      const a = pts[idx], b = pts[idx + 1];
+      const segL = Math.max(0.01, b[3] - a[3]);
+      const f = (targetD - a[3]) / segL;
+      const dx = b[0] - a[0], dz = b[2] - a[2];
+      const l = Math.hypot(dx, dz) || 1;
+      const nx = -dz / l, nz = dx / l;
+      dummy.position.set(a[0] + dx * f + nx * ca.off, a[1] + (b[1] - a[1]) * f, a[2] + dz * f + nz * ca.off);
+      dummy.rotation.set(0, Math.atan2(dx * Math.sign(ca.sp), dz * Math.sign(ca.sp)), 0);
+      dummy.updateMatrix();
+      carMesh.setMatrixAt(i, dummy.matrix);
+    }
+    carMesh.instanceMatrix.needsUpdate = true;
+  }
   for (const s of layers.poi.children) {
     const d = camera.position.distanceTo(s.position);
     s.visible = d < layers.poi.userData.range;
