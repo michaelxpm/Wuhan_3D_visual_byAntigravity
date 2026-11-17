@@ -6,8 +6,8 @@
 ## Git Status
 - **Repository Root**: `D:\coding\2611-3D-wuhan-visual--map-byAntigravity`
 - **Active Branch**: `develop`
-- **Stable Branch**: `main` (at initial commit `78ba2ce`; awaiting explicit user acceptance before merge/tag)
-- **Remote**: None configured yet
+- **Stable Branch**: `main` (release `v1.0.0` merged & tagged)
+- **Remote**: `origin` -> `https://github.com/michaelxpm/Wuhan_3D_visual_byAntigravity.git`
 
 ## Completed Milestones
 - **P0–P2**: Environment, Git setup, Wuchang boundary + OSM extraction (`D:\WuhanGIS\hubei-261109.osm.pbf` kept strictly read-only), Copernicus 30 m DEM, GlobalBuildingAtlas heights (3,382 OSM matches), MapTiler z14 satellite mosaic (`satellite.jpg`), and local-meter runtime data (`web/public/data/`).

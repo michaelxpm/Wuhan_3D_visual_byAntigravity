@@ -30,3 +30,10 @@ On a fresh clone (where `data/` and `web/public/data/` are absent):
    - Download Copernicus DEM (`N30_E114`) to `data/raw/dem_N30_E114.tif` and GlobalBuildingAtlas (`e110_n35_e115_n30`) to `data/raw/gba/`, then run `python pipeline/p2a_gba.py`.
    - `python pipeline/p2_prepare.py` — Generate `web/public/data/` (`terrain.bin`, `buildings.json`, `roads.json`, `water.json`, `green.json`, `trees_*.json`, `meta.json`, etc.).
    - `python pipeline/p2c_satellite.py` — Download & warp MapTiler satellite tiles into `web/public/data/satellite.jpg`.
+
+## Data Attribution & Licenses
+- **OpenStreetMap**: Building footprints, roads, railways, water, green areas, and POIs © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), licensed under **ODbL v1.0**.
+- **GlobalBuildingAtlas (TUM)**: Building height estimates (`GBA.LoD1` / `GBA.ODbLPolygon`, Zhu et al., ESSD 2025).
+- **Copernicus DEM GLO-30**: Elevation data © European Union / Copernicus Programme.
+- **MapTiler Satellite**: Satellite imagery tiles © MapTiler / data providers.
+

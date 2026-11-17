@@ -205,6 +205,28 @@ function extrudeBuilding(b) {
   for (let i = 0; i < n; i++) { const c = nor.getY(i) > 0.7 ? rc : wc; col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g = g.toNonIndexed ? (g.index ? g.toNonIndexed() : g) : g;
+  if (b.rs === 'gabled') {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let i = 0; i < o.length; i += 2) { x0 = Math.min(x0, o[i]); x1 = Math.max(x1, o[i]); y0 = Math.min(y0, o[i + 1]); y1 = Math.max(y1, o[i + 1]); }
+    const w = x1 - x0, d = y1 - y0, rh = Math.min(b.rh || 2.8, 5);
+    if (w > 2 && d > 2) {
+      const topY = bottom + depth;
+      const ridge = w >= d;
+      const p = new THREE.CylinderGeometry(0.01, Math.SQRT1_2, 1, 4, 1);
+      p.rotateY(Math.PI / 4);
+      const rg = p.toNonIndexed();
+      rg.deleteAttribute('uv');
+      rg.scale(ridge ? w : d, rh, ridge ? d : w);
+      if (!ridge) rg.rotateY(Math.PI / 2);
+      rg.translate((x0 + x1) / 2, topY + rh / 2, -(y0 + y1) / 2);
+      const rn = rg.attributes.position.count;
+      const rcol = new Float32Array(rn * 3);
+      for (let i = 0; i < rn; i++) { rcol[i * 3] = rc.r; rcol[i * 3 + 1] = rc.g; rcol[i * 3 + 2] = rc.b; }
+      rg.setAttribute('color', new THREE.BufferAttribute(rcol, 3));
+      const merged = mergeGeometries([g, rg], false);
+      if (merged) g = merged;
+    }
+  }
   return g;
 }
 
