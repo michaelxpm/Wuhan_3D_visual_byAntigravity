@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>武昌区 3D 地图 · Wuchang District 3D Map</title>
+<style>
+  html, body { margin:0; height:100%; overflow:hidden; background:#9fb7c8; font-family: "Microsoft YaHei", system-ui, sans-serif; }
+  #app { position:fixed; inset:0; }
+  #hud { position:fixed; left:12px; top:12px; width:250px; background:rgba(20,28,38,.78); color:#e8eef4; padding:10px 12px; border-radius:8px; font-size:12px; line-height:1.55; backdrop-filter: blur(4px); user-select:none; }
+  #hud h1 { font-size:14px; margin:0 0 6px; }
+  #hud label { display:block; cursor:pointer; }
+  #hud input[type=range] { width:100%; }
+  #hud select, #hud input[type=text] { width:100%; box-sizing:border-box; margin:2px 0 6px; }
+  #info { position:fixed; right:12px; top:12px; max-width:300px; background:rgba(20,28,38,.85); color:#e8eef4; padding:10px 12px; border-radius:8px; font-size:12px; display:none; }
+  #hint { position:fixed; left:12px; bottom:12px; color:#fff; text-shadow:0 0 4px #000; font-size:12px; }
+  #attr { position:fixed; right:10px; bottom:6px; color:#fff; text-shadow:0 0 3px #000; font-size:11px; }
+  #loading { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#18222c; color:#cfe; font-size:16px; z-index:10; flex-direction:column; gap:8px; }
+  #results { max-height:140px; overflow:auto; }
+  #results div { cursor:pointer; padding:1px 0; } #results div:hover { color:#7cf; }
+</style>
+</head>
+<body>
+<div id="loading"><div>武昌区 3D 地图加载中…</div><div id="lmsg" style="font-size:12px;opacity:.7"></div></div>
+<div id="app"></div>
+<div id="hud">
+  <h1>武昌区 3D · Wuchang</h1>
+  <label>画质 Quality
+    <select id="quality"><option value="low">低 Low</option><option value="med" selected>中 Medium</option><option value="high">高 High</option></select>
+  </label>
+  <label>时间 Time of day: <span id="tval">15:00</span><input id="time" type="range" min="0" max="24" step="0.25" value="15"></label>
+  <label><input type="checkbox" id="L_buildings" checked> 建筑 Buildings</label>
+  <label><input type="checkbox" id="L_roads" checked> 道路 Roads</label>
+  <label><input type="checkbox" id="L_water" checked> 水体 Water</label>
+  <label><input type="checkbox" id="L_trees" checked> 树木 Trees</label>
+  <label><input type="checkbox" id="L_rails" checked> 铁路/地铁 Rail</label>
+  <label><input type="checkbox" id="L_poi" checked> 地标 Labels</label>
+  <input type="text" id="search" placeholder="搜索地名 Search…" />
+  <div id="results"></div>
+  <div id="stats" style="opacity:.7;margin-top:4px"></div>
+</div>
+<div id="info"></div>
+<div id="hint">左键旋转 · 右键平移 · 滚轮缩放 · 点击建筑查看信息 · <b>F</b> 第一人称 (WASD, Shift 加速, Esc 退出)</div>
+<div id="attr">© OpenStreetMap contributors (ODbL) · GlobalBuildingAtlas (TUM) · Copernicus DEM</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

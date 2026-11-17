@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / Vite
+web/node_modules/
+web/dist/
+.vite/
+*.log
+
+# Large raw & downloaded datasets
+data/
+
+# Generated 3D map runtime assets (reproducible via pipeline/)
+web/public/data/
+
+# Headless browser screenshots & verification artifacts
+web/shots/
+
+# Environment / API tokens
+.env
+.env.*
+!.env.example
+
+# OS / Editor
+.DS_Store
+Thumbs.db
