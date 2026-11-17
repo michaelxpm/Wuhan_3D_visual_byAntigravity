@@ -227,15 +227,29 @@ bmat.onBeforeCompile = (sh) => {
     .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n totalEmissiveRadiance += vec3(1.0,0.85,0.55) * lit * 0.9;');
 };
 
+function polyCentroid(o) {
+  let sx = 0, sy = 0, cnt = o.length / 2;
+  for (let i = 0; i < o.length; i += 2) { sx += o[i]; sy += o[i + 1]; }
+  return [sx / cnt, sy / cnt];
+}
+
 const cells = new Map();
 let nb = 0;
-let yctPos = null;
+let yctPos = null, glcPos = null, wcsPos = null;
 for (const b of buildings) {
   if (b.nm === '黄鹤楼') {
-    let sx = 0, sy = 0, cnt = b.o.length / 2;
-    for (let i = 0; i < b.o.length; i += 2) { sx += b.o[i]; sy += b.o[i + 1]; }
-    yctPos = [sx / cnt, sy / cnt, b.ht || 51.4];
+    const [cx, cy] = polyCentroid(b.o);
+    yctPos = [cx, cy, b.ht || 51.4];
     continue;
+  }
+  if (b.nm === '武汉绿地中心') {
+    const [cx, cy] = polyCentroid(b.o);
+    glcPos = [cx, cy, b.ht || 476.0];
+    continue;
+  }
+  if (b.nm === '武昌站') {
+    const [cx, cy] = polyCentroid(b.o);
+    wcsPos = [cx, cy, b.ht || 24.3];
   }
   const g = extrudeBuilding(b); if (!g) continue;
   const cx = b.o[0], cy = b.o[1]; const k = cellKey(cx, cy);
@@ -280,8 +294,50 @@ if (yctPos) {
   const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.9, 6, 8), goldMat);
   spire.position.y = curY + 7.5; yct.add(spire);
   yct.position.set(yx, gy, -yy);
+  yct.traverse((o) => { if (o.isMesh) o.userData.landmark = { nm: '黄鹤楼 Yellow Crane Tower', ty: '地标建筑 (5层八角重檐)', ht: yh }; });
   layers.buildings.add(yct);
   nb++;
+}
+// Wuhan Greenland Center (476 m tapered 3-lobed glass tower)
+if (glcPos) {
+  const [gx, gy2, gh] = glcPos;
+  const gy = ground(gx, gy2);
+  const glc = new THREE.Group();
+  const glassMat = new THREE.MeshStandardMaterial({ color: 0x7ba0b8, roughness: 0.22, metalness: 0.45 });
+  const crownMat = new THREE.MeshStandardMaterial({ color: 0xa6c4d6, roughness: 0.16, metalness: 0.55 });
+  // 5 tapering tiers from base to 476m crown
+  const tiers = [
+    [34, 32, 130, 0],
+    [32, 28, 130, 130],
+    [28, 23, 105, 260],
+    [23, 16, 70, 365],
+    [16, 4, 41, 435],
+  ];
+  for (let i = 0; i < tiers.length; i++) {
+    const [rb, rt, h, y0] = tiers[i];
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, 9), i === tiers.length - 1 ? crownMat : glassMat);
+    m.position.y = y0 + h / 2; m.castShadow = m.receiveShadow = true;
+    m.userData.landmark = { nm: '武汉绿地中心 Wuhan Greenland Center', ty: '超高层地标 (流线型玻璃幕墙)', ht: gh };
+    glc.add(m);
+  }
+  glc.position.set(gx, gy, -gy2);
+  layers.buildings.add(glc);
+  nb++;
+}
+// Wuchang Railway Station pitched traditional-modern roof accent
+if (wcsPos) {
+  const [wx, wy, wh] = wcsPos;
+  const gy = ground(wx, wy);
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(42, 10, 4),
+    new THREE.MeshStandardMaterial({ color: 0x5c6873, roughness: 0.5, metalness: 0.2 })
+  );
+  roof.scale.set(1.8, 1, 1.1);
+  roof.rotation.y = Math.PI / 4;
+  roof.position.set(wx, gy + wh + 4, -wy);
+  roof.castShadow = true;
+  roof.userData.landmark = { nm: '武昌站 Wuchang Railway Station', ty: '铁路枢纽 (楚风大屋檐)', ht: wh };
+  layers.buildings.add(roof);
 }
 // Yangtze River Bridge Wuchang bridgehead twin towers (near -4835, -735)
 {
@@ -296,6 +352,7 @@ if (yctPos) {
     const cap = new THREE.Mesh(new THREE.ConeGeometry(7.2, 5.5, 4), rfMat);
     cap.rotation.y = Math.PI / 4; cap.position.y = 46.5; grp.add(cap);
     grp.position.set(bx + dx, deckY - 12, -(by + dy));
+    grp.traverse((o) => { if (o.isMesh) o.userData.landmark = { nm: '武汉长江大桥桥头堡', ty: '桥梁地标', ht: 44 }; });
     layers.buildings.add(grp);
   }
 }
@@ -554,7 +611,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!hits.length) { box.style.display = 'none'; return; }
   const h = hits[0]; const ud = h.object.userData;
   if (!ud?.ranges) {
-    box.innerHTML = '<b>黄鹤楼 Yellow Crane Tower</b><br>类型: 地标建筑 (5层八角重檐)<br>高度: 51.4 m (OSM 高度标注)';
+    const lm = ud?.landmark || { nm: '地标建筑', ty: 'Landmark', ht: '-' };
+    box.innerHTML = `<b>${lm.nm}</b><br>类型: ${lm.ty}<br>高度: ${lm.ht} m`;
     box.style.display = 'block';
     return;
   }
