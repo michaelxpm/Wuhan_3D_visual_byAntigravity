@@ -1,1 +1,6 @@
-[{"cam":[-1800,1500,2600,0,30,0],"out":"shots/a1.png"}]
+[
+  {"cam":[-1800,1500,2600,0,30,0],"time":15,"out":"shots/b1_overview.png"},
+  {"cam":[-3600,280,1300,-4100,40,950],"time":15.5,"out":"shots/b2_huanghelou.png"},
+  {"cam":[-1400,420,-2650,-1905,120,-3239],"time":17.6,"out":"shots/b3_greenland_sunset.png"},
+  {"cam":[-1400,420,-2650,-1905,120,-3239],"time":21.5,"out":"shots/b4_night.png"}
+]
