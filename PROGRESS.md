@@ -1,43 +1,38 @@
 # PROGRESS — 3D Wuhan Visual Map (Wuchang District)
 
 ## Current Phase
-- **P2 / P3 Transition**: Core OSM + DEM + GBA height + MapTiler satellite data pipeline is built; initial Three.js 3D scene (`web/src/main.js`) is implemented and rendered (`web/shots/a1.png`). Git repository initialized and configured.
+- **P4 → P5 (Visual Realism & Landmark Detailing)**: Core 3D renderer, basemap switching, water/lighting fixes, and initial landmarks (Yellow Crane Tower, Yangtze River Bridge towers) are verified and passing `vite build` + headless multi-angle checks.
 
 ## Git Status
 - **Repository Root**: `D:\coding\2611-3D-wuhan-visual--map-byAntigravity`
 - **Active Branch**: `develop`
 - **Stable Branch**: `main` (at initial commit `78ba2ce`)
-- **Remote**: None configured yet (local only)
+- **Remote**: None configured yet
 
 ## Completed Milestones
-- **P0**: Node.js v26.13.1 + npm 11.20.0 installed; Python geospatial stack (`osmium`, `geopandas`, `shapely`, `pyproj`, `rasterio`, `ijson`) verified; `web/` Vite + Three.js project initialized.
-- **P1**: Extracted Wuchang District administrative boundary (`relation/3076297`) and all OSM layers within boundary + 500 m buffer from read-only `D:\WuhanGIS\hubei-261109.osm.pbf`.
-- **P2**:
-  - Downloaded Copernicus 30 m DEM (`data/raw/dem_N30_E114.tif`).
-  - Downloaded GlobalBuildingAtlas ODbL polygons & LoD1 heights (`data/raw/gba/`) and matched 3,382 OSM building heights for Wuchang.
-  - Downloaded and warped 100 MapTiler z14 satellite tiles into `web/public/data/satellite.jpg`.
-  - Generated local-meter runtime datasets in `web/public/data/` (`terrain.bin`, `buildings.json`, `roads.json`, `water.json`, `green.json`, `trees_osm.json`, `trees_synthetic.json`, `rails.json`, `pois.json`, `meta.json`).
-- **P3 (Initial)**: Implemented Three.js viewer (`web/src/main.js`) with terrain, water, extruded buildings + night windows, roads/bridges/piers, instanced trees, POI labels, time-of-day sky, quality presets, and first-person mode. Verified first headless screenshot (`web/shots/a1.png`).
-- **Git & Governance Setup**: Created `.gitignore`, `.env`, `.env.example`, `AGENTS.md`, and `README.md`; removed hardcoded MapTiler key from `pipeline/p2c_satellite.py`; committed initial state to `main` (`78ba2ce`) and switched to `develop`.
+- **P0–P2**: Environment, Git setup, Wuchang boundary + OSM extraction, Copernicus 30 m DEM, GlobalBuildingAtlas heights (3,382 OSM matches), MapTiler z14 satellite mosaic (`satellite.jpg`), and local-meter runtime data (`web/public/data/`).
+- **P3 & P4**:
+  - Three.js renderer with terrain, water, 7,615 buildings (procedural windows + night lighting), roads/bridges/piers, 152k instanced trees, search, building click-inspection, quality presets (`Low`/`Med`/`High`), time-of-day slider, and first-person (`F` key) mode.
+  - Added `Basemap` selector (`Hybrid` / `Satellite` / `Vector`), fixed POI label distance scaling, fixed Chinese color tags (`CN_COLOR`) and favicon 404, smoothed water reflections, and improved dusk/night ambient lighting.
+  - Added `web/vite.config.js` (`build.target: 'esnext'`) so `npm run build` succeeds cleanly.
+- **P5 (Started)**:
+  - Procedural 5-tier octagonal **Yellow Crane Tower (黄鹤楼)** at exact OSM footprint/height (`51.4 m`).
+  - **Wuhan Yangtze River Bridge** Wuchang bridgehead twin towers.
+  - 8 one-click **Landmark Quick-Jump** buttons in HUD.
 
-## Generated Files & Data Locations (Git-Ignored)
-- `data/raw/wuchang_boundary.geojson`, `data/raw/osm/*.geojson`
-- `data/raw/dem_N30_E114.tif` (42.9 MB)
-- `data/raw/gba/odbl.geojson` (95 MB), `data/raw/gba/lod1.json` (881 MB), `data/raw/gba_wuchang.json` (1.35 MB)
-- `data/raw/sat_tiles/*.jpg` (100 tiles, 7.01 MB)
-- `web/public/data/*` (~16.4 MB runtime assets)
-- `web/node_modules/` (63.91 MB)
-- `web/shots/a1.png`
+## Acceptance Test Results (Latest)
+- `npm run build` (`vite build`): **PASS** (`1.68s`, 0 errors, `dist/` built).
+- Headless Edge multi-angle verification (`web/shots/b1_overview.png`, `b2_huanghelou.png`, `b3_greenland_sunset.png`, `b4_night.png`): **PASS** (0 console errors, 0 warnings, 0 404s).
 
 ## Known Limitations & Issues
-- `pipeline/p2d_fetch_wuchang_gba_polys.py` failed during the final range fetch due to a transient DNS error (`huggingface.co`); non-OSM Microsoft/satellite footprints from GBA have not yet been merged into `buildings.json`.
-- `web/src/main.js` still needs integration of `satellite.jpg` ground blending, landmark detailing (Yellow Crane Tower, Yangtze River Bridge, etc.), PBR/textured facades, and performance/memory verification on integrated GPU.
+- `pipeline/p2d_fetch_wuchang_gba_polys.py` (non-OSM Microsoft/satellite footprints from HuggingFace) previously hit transient DNS errors; OSM + GBA-matched heights cover 7,615 buildings.
+- Real-world GPU FPS on user's AMD Vega 496 MB iGPU should be verified interactively by user at `http://localhost:5173/`.
 - `D:\WuhanGIS` remains strictly read-only.
 
 ## Next Planned Actions
-1. Retry/complete `pipeline/p2d_fetch_wuchang_gba_polys.py` if needed, or validate current building coverage.
-2. Continue P3/P4: integrate MapTiler satellite imagery toggle/blending with vector ground, refine bridge/tunnel 3D geometry, add landmark detailing, and verify console/rendering/FPS across multiple camera angles.
+1. **P5 Finish**: Add sculpted crown/curtain-wall material for Wuhan Greenland Center (`476 m`), refine remaining key landmarks (e.g. Wuchang Railway Station, Hubei Provincial Museum / Chuhe Han Street), and add final polish & documentation.
+2. Final end-to-end verification and user acceptance before any `main` merge.
 
 ## Resume Instructions
 - Work on `develop` branch only.
-- Run `cd web && npm run dev` to preview locally; run `python pipeline/p2_prepare.py` to regenerate `web/public/data/` if `pipeline/` changes.
+- Dev server is running on `http://localhost:5173/` (or run `cd web && npm run dev`).

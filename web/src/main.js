@@ -50,8 +50,14 @@ function ground(x, y) {
 }
 const W = (x, y, h) => new THREE.Vector3(x, h, -y); // local(east,north) -> three
 
-const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas] = await Promise.all(
-  ['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas'].map(J));
+const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, satTex] = await Promise.all([
+  ...['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas'].map(J),
+  new THREE.TextureLoader().loadAsync('/data/satellite.jpg')
+]);
+satTex.colorSpace = THREE.SRGBColorSpace;
+satTex.anisotropy = 8;
+satTex.generateMipmaps = true;
+satTex.minFilter = THREE.LinearMipmapLinearFilter;
 setMsg('building scene…');
 
 const CELL = 1000;
@@ -83,10 +89,25 @@ function buildGround() {
   ctx.putImageData(id, 0, 0);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8; tex.generateMipmaps = true; tex.minFilter = THREE.LinearMipmapLinearFilter;
-  return { tex, vb };
+  return { tex, vb, canvas: cv };
 }
 {
-  const { tex, vb } = buildGround();
+  const { tex: vecTex, vb, canvas: vecCanvas } = buildGround();
+
+  // Build hybrid texture (vector base + 72% satellite imagery) on an offscreen canvas
+  const hybCanvas = document.createElement('canvas');
+  hybCanvas.width = vecCanvas.width; hybCanvas.height = vecCanvas.height;
+  const hctx = hybCanvas.getContext('2d');
+  hctx.drawImage(vecCanvas, 0, 0);
+  hctx.globalAlpha = 0.84;
+  hctx.drawImage(satTex.image, 0, 0, hybCanvas.width, hybCanvas.height);
+  hctx.globalAlpha = 1.0;
+  const hybTex = new THREE.CanvasTexture(hybCanvas);
+  hybTex.colorSpace = THREE.SRGBColorSpace;
+  hybTex.anisotropy = 8;
+  hybTex.generateMipmaps = true;
+  hybTex.minFilter = THREE.LinearMipmapLinearFilter;
+
   const stride = 2; // 50 m mesh
   const nx = Math.floor((T.nx - 1) / stride) + 1, ny = Math.floor((T.ny - 1) / stride) + 1;
   const pos = new Float32Array(nx * ny * 3), uv = new Float32Array(nx * ny * 2);
@@ -102,15 +123,21 @@ function buildGround() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setIndex(idx); g.computeVertexNormals();
-  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.95, metalness: 0 }));
+
+  const terrainMat = new THREE.MeshStandardMaterial({ map: hybTex, roughness: 0.94, metalness: 0 });
+  terrainMat.userData.maps = { hybrid: hybTex, sat: satTex, vec: vecTex };
+
+  const m = new THREE.Mesh(g, terrainMat);
   m.receiveShadow = true; m.name = 'terrain';
+  layers.terrain.userData.mat = terrainMat;
   layers.terrain.add(m);
   // river bed / far plane
-  const far = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x8f9a72, roughness: 1 }));
+  const far = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x6f7a62, roughness: 1 }));
   far.position.y = wl - 6; layers.terrain.add(far);
 }
 
 // ------------------------------------------------------------------ water
+const waterUniforms = { uTime: { value: 0 } };
 {
   const geos = [];
   const mkShape = (p) => {
@@ -120,10 +147,9 @@ function buildGround() {
   };
   for (const p of water) { try { const g = new THREE.ShapeGeometry(mkShape(p)); g.rotateX(-Math.PI / 2); geos.push(g); } catch (e) { } }
   const merged = mergeGeometries(geos, false);
-  const mat = new THREE.MeshPhysicalMaterial({ color: 0x4b7f93, roughness: 0.12, metalness: 0.0, transparent: true, opacity: 0.88, envMapIntensity: 1.2 });
+  const mat = new THREE.MeshPhysicalMaterial({ color: 0x3b6e7f, roughness: 0.16, metalness: 0.04, transparent: true, opacity: 0.88, envMapIntensity: 1.1 });
   const mesh = new THREE.Mesh(merged, mat); mesh.position.y = wl + 0.05; mesh.renderOrder = 1;
   layers.water.add(mesh);
-  const far = new THREE.Mesh(new THREE.PlaneGeometry(200000, 200000).rotateX(-Math.PI / 2), mat); far.position.y = wl - 0.5; far.visible = false;
 }
 
 // ------------------------------------------------------------------ buildings
@@ -135,8 +161,20 @@ const PAL = {
   retail: [0xc6bcae, 0xb9c1c6, 0xd0c7b8], hotel: [0xc9c1b3, 0xb6bec4], university: [0xcfc2a8, 0xc2b79e, 0xd7ccb4], school: [0xd2c6ae, 0xc8bda5],
   industrial: [0xa9a8a2, 0xb5b3aa, 0x9b9a96], warehouse: [0xa9a8a2, 0xb5b3aa], dormitory: [0xd5cdbd, 0xc9c1b1], yes: [0xd2cdc2, 0xc6c1b6, 0xdad6cc, 0xbdb8ad],
 };
+const CN_COLOR = { '黑': '#222428', '白': '#ecebe6', '灰': '#8c8f94', '红': '#a8443a', '蓝': '#3b6a96', '绿': '#4c7a52', '黄': '#d4b464', '棕': '#7a5942', '银': '#b8bec4', '金': '#c8a654', '橙': '#c8763c', '紫': '#6c527a' };
 const colorCache = new Map();
-function parseColor(s) { if (!s) return null; if (colorCache.has(s)) return colorCache.get(s); let c = null; try { c = new THREE.Color(s); } catch (e) { } colorCache.set(s, c); return c; }
+function parseColor(s) {
+  if (!s) return null;
+  if (colorCache.has(s)) return colorCache.get(s);
+  const mapped = CN_COLOR[s.trim()] || s.trim();
+  let c = null;
+  try {
+    c = new THREE.Color(mapped);
+    if (Number.isNaN(c.r)) c = null;
+  } catch (e) { c = null; }
+  colorCache.set(s, c);
+  return c;
+}
 function buildingColor(b) {
   const bc = parseColor(b.bc); if (bc) return bc;
   const pal = PAL[b.ty] || PAL.yes; const r = hashStr(b.id);
@@ -191,7 +229,14 @@ bmat.onBeforeCompile = (sh) => {
 
 const cells = new Map();
 let nb = 0;
+let yctPos = null;
 for (const b of buildings) {
+  if (b.nm === '黄鹤楼') {
+    let sx = 0, sy = 0, cnt = b.o.length / 2;
+    for (let i = 0; i < b.o.length; i += 2) { sx += b.o[i]; sy += b.o[i + 1]; }
+    yctPos = [sx / cnt, sy / cnt, b.ht || 51.4];
+    continue;
+  }
   const g = extrudeBuilding(b); if (!g) continue;
   const cx = b.o[0], cy = b.o[1]; const k = cellKey(cx, cy);
   if (!cells.has(k)) cells.set(k, []);
@@ -206,6 +251,53 @@ for (const [k, list] of cells) {
   mesh.userData = { kind: 'building', ranges, items: list.map((l) => l.b) };
   merged.computeBoundingSphere(); merged.computeBoundingBox();
   layers.buildings.add(mesh);
+}
+if (yctPos) {
+  const [yx, yy, yh] = yctPos;
+  const gy = ground(yx, yy);
+  const yct = new THREE.Group();
+  const stoneMat = new THREE.MeshStandardMaterial({ color: 0xddd8ce, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x9c2c24, roughness: 0.78 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0xd99b26, roughness: 0.45, metalness: 0.18 });
+  const goldMat = new THREE.MeshStandardMaterial({ color: 0xf2c94c, roughness: 0.3, metalness: 0.6 });
+  // Podium
+  const pod = new THREE.Mesh(new THREE.CylinderGeometry(20, 23, 5, 8), stoneMat);
+  pod.position.y = 2.5; pod.castShadow = pod.receiveShadow = true; yct.add(pod);
+  // 5 tiers
+  let curY = 5;
+  for (let tier = 0; tier < 5; tier++) {
+    const r = 15.5 - tier * 2.1;
+    const h = 7.4 - tier * 0.45;
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.92, r, h, 8), wallMat);
+    body.position.y = curY + h / 2; body.castShadow = body.receiveShadow = true; yct.add(body);
+    const eave = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.72, r * 1.42, 3.0, 8), roofMat);
+    eave.position.y = curY + h + 0.6; eave.castShadow = true; yct.add(eave);
+    curY += h + 1.1;
+  }
+  // Top spire
+  const topRoof = new THREE.Mesh(new THREE.ConeGeometry(8.2, 6.5, 8), roofMat);
+  topRoof.position.y = curY + 2.5; topRoof.castShadow = true; yct.add(topRoof);
+  const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.9, 6, 8), goldMat);
+  spire.position.y = curY + 7.5; yct.add(spire);
+  yct.position.set(yx, gy, -yy);
+  layers.buildings.add(yct);
+  nb++;
+}
+// Yangtze River Bridge Wuchang bridgehead twin towers (near -4835, -735)
+{
+  const bx = -4835, by = -735;
+  const deckY = wl + 11;
+  const twMat = new THREE.MeshStandardMaterial({ color: 0xc9c2b4, roughness: 0.85 });
+  const rfMat = new THREE.MeshStandardMaterial({ color: 0x3b6e4c, roughness: 0.55 });
+  for (const [dx, dy] of [[-14, -14], [14, 14]]) {
+    const grp = new THREE.Group();
+    const shaft = new THREE.Mesh(new THREE.BoxGeometry(9, 44, 9), twMat);
+    shaft.position.y = 22; shaft.castShadow = shaft.receiveShadow = true; grp.add(shaft);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(7.2, 5.5, 4), rfMat);
+    cap.rotation.y = Math.PI / 4; cap.position.y = 46.5; grp.add(cap);
+    grp.position.set(bx + dx, deckY - 12, -(by + dy));
+    layers.buildings.add(grp);
+  }
 }
 setMsg(`buildings: ${nb}`);
 
@@ -377,22 +469,34 @@ if (piers.length) {
   }
 }
 
-// ------------------------------------------------------------------ labels (sprites for notable POIs)
+// ------------------------------------------------------------------ labels (sprites for notable POIs + major buildings)
 const poiList = [];
 {
   const KEEP = new Set(['university', 'college', 'school', 'hospital', 'museum', 'attraction', 'monument', 'memorial', 'station', 'hotel', 'viewpoint', 'theatre', 'library', 'townhall', 'place_of_worship', 'stadium', 'castle', 'fort', 'ruins', 'mall', 'department_store', 'park', 'zoo', 'gallery', 'arts_centre', 'bus_station', 'ferry_terminal']);
   const ranked = pois.filter((p) => p.name && (KEEP.has(p.k) || p.k === 'city' || p.k === 'suburb' || p.k === 'quarter' || p.k === 'neighbourhood'));
   for (const p of ranked) poiList.push(p);
-  const cap = document.createElement('canvas');
+  const seenNames = new Set(poiList.map((p) => p.name));
+  for (const b of buildings) {
+    if (!b.nm || seenNames.has(b.nm) || b.ht < 15) continue;
+    seenNames.add(b.nm);
+    poiList.push({ x: b.o[0], y: b.o[1], name: b.nm, k: b.ty || 'building', ht: b.ht });
+  }
   const made = new Set();
-  for (const p of ranked.slice(0, 260)) {
+  const labelItems = [
+    ...poiList.filter((p) => p.ht >= 30 || KEEP.has(p.k)).slice(0, 260)
+  ];
+  for (const p of labelItems) {
     if (made.has(p.name)) continue; made.add(p.name);
     const c = document.createElement('canvas'); const ctx = c.getContext('2d'); ctx.font = 'bold 34px "Microsoft YaHei", sans-serif';
     const w = Math.ceil(ctx.measureText(p.name).width) + 24; c.width = w; c.height = 56;
-    const x = c.getContext('2d'); x.font = 'bold 34px "Microsoft YaHei", sans-serif'; x.fillStyle = 'rgba(15,25,35,.62)'; x.fillRect(0, 0, w, 56); x.fillStyle = '#fff'; x.textBaseline = 'middle'; x.fillText(p.name, 12, 29);
+    const x = c.getContext('2d'); x.font = 'bold 34px "Microsoft YaHei", sans-serif'; x.fillStyle = 'rgba(15,25,35,.68)'; x.fillRect(0, 0, w, 56); x.fillStyle = '#fff'; x.textBaseline = 'middle'; x.fillText(p.name, 12, 29);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
     const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthWrite: false, depthTest: false, transparent: true, fog: false }));
-    const s = 18; sp.scale.set((w / 56) * s, s, 1); sp.position.set(p.x, ground(p.x, p.y) + 60, -p.y); sp.renderOrder = 10; sp.userData.name = p.name; sp.userData.k = p.k;
+    const hBase = p.ht ? p.ht + 22 : 55;
+    sp.userData.aspect = w / 56;
+    sp.scale.set((w / 56) * 20, 20, 1);
+    sp.position.set(p.x, ground(p.x, p.y) + hBase, -p.y);
+    sp.renderOrder = 10; sp.userData.name = p.name; sp.userData.k = p.k;
     layers.poi.add(sp);
   }
 }
@@ -402,14 +506,15 @@ function setTime(h) {
   $('tval').textContent = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
   const ang = ((h - 6) / 12) * Math.PI; // 6h sunrise, 18h sunset
   const elev = Math.sin(ang), az = Math.cos(ang);
-  const dir = new THREE.Vector3(az * 0.8, Math.max(elev, -0.2), -0.6).normalize();
+  const dir = new THREE.Vector3(az * 0.8, Math.max(elev, -0.15), -0.6).normalize();
   const U = sky.material.uniforms; U.sunPosition.value.copy(dir.clone().multiplyScalar(1));
-  U.turbidity.value = 6; U.rayleigh.value = 1.6; U.mieCoefficient.value = 0.006; U.mieDirectionalG.value = 0.8;
-  const day = THREE.MathUtils.smoothstep(elev, -0.05, 0.25);
-  sun.intensity = 3.2 * day; sun.color.setHSL(0.1, 0.5 * (1 - day * 0.6), 0.5 + 0.3 * day);
-  hemi.intensity = 0.15 + 0.85 * day;
-  renderer.toneMappingExposure = 0.35 + 0.65 * day;
-  scene.fog.color.setHSL(0.58, 0.35, 0.12 + 0.6 * day);
+  U.turbidity.value = 5.5; U.rayleigh.value = 1.6; U.mieCoefficient.value = 0.006; U.mieDirectionalG.value = 0.8;
+  const day = THREE.MathUtils.smoothstep(elev, -0.12, 0.22);
+  sun.intensity = 3.2 * day;
+  sun.color.setHSL(0.08 + 0.03 * day, 0.65 * (1 - day * 0.55), 0.52 + 0.28 * day);
+  hemi.intensity = 0.36 + 0.68 * day;
+  renderer.toneMappingExposure = 0.54 + 0.44 * day;
+  scene.fog.color.setHSL(0.58, 0.32, 0.16 + 0.56 * day);
   sun.userData.dir = dir;
   if (bmat.userData.uNight) bmat.userData.uNight.value = 1 - day;
 }
@@ -444,10 +549,16 @@ renderer.domElement.addEventListener('pointerdown', (e) => (downAt = [e.clientX,
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4 || fp) return;
   mouse.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1); ray.setFromCamera(mouse, camera);
-  const hits = ray.intersectObjects(layers.buildings.children, false);
+  const hits = ray.intersectObjects(layers.buildings.children, true);
   const box = $('info');
   if (!hits.length) { box.style.display = 'none'; return; }
-  const h = hits[0]; const ud = h.object.userData; const tri = h.faceIndex;
+  const h = hits[0]; const ud = h.object.userData;
+  if (!ud?.ranges) {
+    box.innerHTML = '<b>黄鹤楼 Yellow Crane Tower</b><br>类型: 地标建筑 (5层八角重檐)<br>高度: 51.4 m (OSM 高度标注)';
+    box.style.display = 'block';
+    return;
+  }
+  const tri = h.faceIndex;
   let lo = 0, hi = ud.ranges.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (ud.ranges[mid] <= tri) lo = mid; else hi = mid - 1; }
   const b = ud.items[lo];
   const SRC = { osm_height: 'OSM 高度标注', osm_levels: 'OSM 层数×3.2m (估算)', gba: 'GlobalBuildingAtlas 高度 (机器学习估算)', type_estimate: '按建筑类型推断 (估算)', gba_footprint: 'GlobalBuildingAtlas 轮廓+高度', osm_part: 'OSM building:part' };
@@ -458,13 +569,36 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // ------------------------------------------------------------------ UI
 for (const k of ['buildings', 'roads', 'water', 'trees', 'rails', 'poi']) $('L_' + k).addEventListener('change', (e) => (layers[k].visible = e.target.checked));
 $('quality').addEventListener('change', (e) => applyQuality(e.target.value));
+$('basemap').addEventListener('change', (e) => {
+  const mat = layers.terrain.userData.mat;
+  if (mat?.userData?.maps?.[e.target.value]) {
+    mat.map = mat.userData.maps[e.target.value];
+    mat.needsUpdate = true;
+  }
+});
+const LANDMARKS = [
+  ['黄鹤楼', -3933, -1009, 260],
+  ['绿地中心', -1905, 3239, 550],
+  ['长江大桥', -4778, -783, 420],
+  ['武昌站', -2641, -2957, 360],
+  ['武汉大学', 1935, -2376, 480],
+  ['楚河汉街', -147, -147, 380],
+  ['东湖', 4200, 1200, 1400],
+  ['沙湖', -600, 1200, 900],
+];
+for (const [nm, lx, ly, dist] of LANDMARKS) {
+  const btn = document.createElement('button');
+  btn.textContent = nm;
+  btn.onclick = () => flyTo(lx, ly, dist);
+  $('qjump').appendChild(btn);
+}
 function applyQuality(q) {
   renderer.setPixelRatio(q === 'low' ? 1 : q === 'med' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 2));
   renderer.shadowMap.enabled = q !== 'low'; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   sun.castShadow = q !== 'low'; sun.shadow.mapSize.set(q === 'high' ? 4096 : 2048, q === 'high' ? 4096 : 2048);
   const sc = sun.shadow.camera; sc.left = sc.bottom = -700; sc.right = sc.top = 700; sc.near = 10; sc.far = 4000; sc.updateProjectionMatrix();
   layers.trees.userData.range = q === 'low' ? 1200 : q === 'med' ? 2200 : 3500;
-  layers.poi.userData.range = 4000;
+  layers.poi.userData.range = 4500;
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
 }
 $('search').addEventListener('input', (e) => {
@@ -473,7 +607,7 @@ $('search').addEventListener('input', (e) => {
   const found = poiList.filter((p) => (p.name || '').toLowerCase().includes(q) || (p['name:en'] || '').toLowerCase().includes(q)).slice(0, 12);
   for (const p of found) { const d = document.createElement('div'); d.textContent = `${p.name} · ${p.k}`; d.onclick = () => flyTo(p.x, p.y); box.appendChild(d); }
 });
-function flyTo(x, y) { const gy = ground(x, y); controls.target.set(x, gy, -y); camera.position.set(x + 250, gy + 260, -y + 330); toggleFP(false); }
+function flyTo(x, y, dist = 320) { const gy = ground(x, y); controls.target.set(x, gy + 15, -y); camera.position.set(x + dist * 0.78, gy + dist * 0.82, -y + dist); toggleFP(false); }
 window.__flyTo = flyTo; window.__cam = (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); controls.target.set(tx, ty, tz); controls.update(); };
 window.__fp = (x, y) => { controls.target.set(x, ground(x, y), -y); toggleFP(true); keys['x'] = 0; };
 
@@ -485,6 +619,7 @@ let last = performance.now(), fpsT = 0, frames = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  waterUniforms.uTime.value = now * 0.001;
   if (fp) {
     const sp = (keys['ShiftLeft'] ? 18 : 5) * dt; const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)), r = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
     if (keys['KeyW']) camera.position.addScaledVector(f, sp); if (keys['KeyS']) camera.position.addScaledVector(f, -sp);
@@ -500,7 +635,15 @@ function frame(now) {
   // tree distance culling
   const tr = layers.trees.userData.range || 2000;
   if (layers.trees.visible) for (const c of layers.trees.userData.chunks) { c.visible = c.userData.center.distanceTo(camera.position) < tr + 700; }
-  for (const s of layers.poi.children) { s.visible = camera.position.distanceTo(s.position) < layers.poi.userData.range; const d = camera.position.distanceTo(s.position); s.scale.setScalar(1); s.material.opacity = 1; }
+  for (const s of layers.poi.children) {
+    const d = camera.position.distanceTo(s.position);
+    s.visible = d < layers.poi.userData.range;
+    if (s.visible) {
+      const sc = Math.max(10, Math.min(44, d * 0.016));
+      s.scale.set((s.userData.aspect || 3) * sc, sc, 1);
+      s.material.opacity = d > layers.poi.userData.range * 0.8 ? 0.5 : 1;
+    }
+  }
   renderer.render(scene, camera);
   frames++; fpsT += dt; if (fpsT > 1) { $('stats').textContent = `${Math.round(frames / fpsT)} fps · ${renderer.info.render.triangles.toLocaleString()} tris · ${nb} buildings`; frames = 0; fpsT = 0; }
 }
