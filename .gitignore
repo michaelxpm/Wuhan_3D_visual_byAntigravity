@@ -10,11 +10,11 @@ web/dist/
 .vite/
 *.log
 
-# Large raw & downloaded datasets
+# Large raw & downloaded datasets (1.04 GB)
 data/
 
-# Generated 3D map runtime assets (reproducible via pipeline/)
-web/public/data/
+# Keep preprocessed web/public/data/ (16.4 MB) tracked for GitHub Pages deployment
+# while still ignoring raw/intermediate data above.
 
 # Headless browser screenshots & verification artifacts
 web/shots/
