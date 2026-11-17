@@ -5,7 +5,8 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 
 const $ = (id) => document.getElementById(id);
 const setMsg = (m) => ($('lmsg').textContent = m);
-const J = async (n) => (await fetch(`/data/${n}.json`)).json();
+const BASE = import.meta.env.BASE_URL;
+const J = async (n) => (await fetch(`${BASE}data/${n}.json`)).json();
 
 // ------------------------------------------------------------------ renderer
 const params = new URLSearchParams(location.search);
@@ -38,7 +39,7 @@ for (const g of Object.values(layers)) world.add(g);
 setMsg('loading data…');
 const meta = await J('meta');
 const T = meta.terrain;
-const terrainRaw = new Float32Array(await (await fetch('/data/terrain.bin')).arrayBuffer());
+const terrainRaw = new Float32Array(await (await fetch(`${BASE}data/terrain.bin`)).arrayBuffer());
 const wl = T.level;
 
 function ground(x, y) {
@@ -52,7 +53,7 @@ const W = (x, y, h) => new THREE.Vector3(x, h, -y); // local(east,north) -> thre
 
 const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, satTex] = await Promise.all([
   ...['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas'].map(J),
-  new THREE.TextureLoader().loadAsync('/data/satellite.jpg')
+  new THREE.TextureLoader().loadAsync(`${BASE}data/satellite.jpg`)
 ]);
 satTex.colorSpace = THREE.SRGBColorSpace;
 satTex.anisotropy = 8;
