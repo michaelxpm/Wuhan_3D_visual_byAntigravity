@@ -583,8 +583,9 @@ function extractModelParts(gltfScene, { targetHeight, targetLength, yawOffset = 
     const hasUv = list.every((g) => !!g.attributes.uv);
     for (const g of list) {
       if (!hasUv && g.attributes.uv) g.deleteAttribute('uv');
-      if (g.attributes.color) g.deleteAttribute('color');
-      if (g.attributes.tangent) g.deleteAttribute('tangent');
+      for (const attr of ['uv1', 'uv2', 'uv3', 'color', 'tangent']) {
+        if (g.attributes[attr]) g.deleteAttribute(attr);
+      }
     }
     const merged = mergeGeometries(list, false);
     if (merged) parts.push({ geo: merged, mat });
@@ -654,16 +655,43 @@ const carList = [];
 const busParts1 = extractModelParts(busGltf?.scene, { targetLength: 10.2 });
 const busParts2 = extractModelParts(busCityGltf?.scene, { targetLength: 10.5 });
 const realCarPools = {
-  volvo: { parts: extractModelParts(carGltf?.scene, { targetLength: 4.5, yawOffset: Math.PI, nameFilter: (n) => !n.includes('interiour') && !n.includes('steeringwheel') }), meshes: [] },
-  mistra: { parts: extractModelParts(mistraGltf?.scene, { targetLength: 4.6, yawOffset: 0, nameFilter: (n) => !n.includes('int_') && !n.includes('seat') && !n.includes('carpet') }), meshes: [] },
+  volvo: { url: 'models/car/scene.gltf', len: 4.5, yaw: Math.PI, filter: (n) => !n.includes('interiour') && !n.includes('steeringwheel'), parts: null, meshes: [], loading: false },
+  mistra: { url: 'models/car_mistra/scene.gltf', len: 4.6, yaw: 0, filter: (n) => !n.includes('int_') && !n.includes('seat') && !n.includes('carpet'), parts: null, meshes: [], loading: false },
+  porsche: { url: 'models/car_porsche/scene.gltf', len: 5.0, yaw: 0, filter: (n) => !n.includes('interior'), parts: null, meshes: [], loading: false },
+  kona: { url: 'models/car_kona/scene.gltf', len: 4.35, yaw: 0, filter: (n) => !n.includes('int_'), parts: null, meshes: [], loading: false },
+  xc60: { url: 'models/car_xc60/scene.gltf', len: 4.7, yaw: 0, filter: (n) => !n.includes('int_') && !n.includes('interior'), parts: null, meshes: [], loading: false },
+  gle: { url: 'models/car_gle/scene.gltf', len: 4.9, yaw: 0, filter: (n) => !n.includes('int_') && !n.includes('interior'), parts: null, meshes: [], loading: false },
 };
+realCarPools.volvo.parts = extractModelParts(carGltf?.scene, { targetLength: 4.5, yawOffset: Math.PI, nameFilter: realCarPools.volvo.filter });
+realCarPools.mistra.parts = extractModelParts(mistraGltf?.scene, { targetLength: 4.6, yawOffset: 0, nameFilter: realCarPools.mistra.filter });
+
+function initCarPool(key) {
+  const p = realCarPools[key];
+  if (!p || !p.parts || p.meshes.length) return;
+  for (const part of p.parts) {
+    const rm = new THREE.InstancedMesh(part.geo, part.mat, MAX_REAL_CARS);
+    rm.count = 0; rm.visible = false; rm.frustumCulled = false;
+    layers.traffic.add(rm);
+    p.meshes.push(rm);
+  }
+}
+async function ensureCarPool(key) {
+  const p = realCarPools[key];
+  if (!p || p.parts || p.loading) return;
+  p.loading = true;
+  const gltf = await loadGltf(p.url);
+  p.parts = extractModelParts(gltf?.scene, { targetLength: p.len, yawOffset: p.yaw, nameFilter: p.filter });
+  initCarPool(key);
+  p.loading = false;
+}
+
 let carMesh = null;
 const busMeshes1 = [], busMeshes2 = [];
 const MAX_REAL_CARS = 28;
 const N_MAX_CARS = 4000;
 if (longPaths.length) {
   const longMain = longPaths.filter((p) => !p.link);
-  const longLinks = longPaths.filter((p) => p.link);
+  const poolRoutes = longMain.length ? longMain : longPaths;
   const carGeo = buildCarGeo();
   const carMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.3 });
   carMesh = new THREE.InstancedMesh(carGeo, carMat, N_MAX_CARS);
@@ -671,10 +699,7 @@ if (longPaths.length) {
   const CAR_COLS = [0xf2f4f7, 0x262c33, 0x7b8694, 0xc43b33, 0x2c669e, 0xd9a834, 0x4b7862, 0x8f9aa6];
   const c = new THREE.Color();
   for (let i = 0; i < N_MAX_CARS; i++) {
-    // Spawn 35% of cars on interchange links so interchanges stay busy
-    const useLink = longLinks.length && (i % 10 < 3 || !longMain.length);
-    const pool = useLink ? longLinks : longMain;
-    const tp = pool[i % pool.length];
+    const tp = poolRoutes[i % poolRoutes.length];
     const dir = tp.ow ? 1 : (i % 2 === 0 ? 1 : -1);
     carList.push({ path: tp, t: (i * 0.6180339) % 1, sp: 11 + (i % 7) * 2.4, dir, off: dir * 1.85, kind: i % 2 === 0 ? 'volvo' : 'mistra' });
     c.setHex(CAR_COLS[i % CAR_COLS.length]);
@@ -684,16 +709,8 @@ if (longPaths.length) {
   carMesh.frustumCulled = false;
   layers.traffic.add(carMesh);
 
-  for (const key of ['volvo', 'mistra']) {
-    const p = realCarPools[key];
-    if (!p.parts) continue;
-    for (const part of p.parts) {
-      const rm = new THREE.InstancedMesh(part.geo, part.mat, MAX_REAL_CARS);
-      rm.count = 0; rm.visible = false; rm.frustumCulled = false;
-      layers.traffic.add(rm);
-      p.meshes.push(rm);
-    }
-  }
+  initCarPool('volvo');
+  initCarPool('mistra');
 
   // Real city buses split across Mercedes Citaro + City Bus
   const N_BUS = 160;
@@ -721,7 +738,12 @@ if (longPaths.length) {
   const treeParts = extractModelParts(treeGltf?.scene, { targetHeight: 7.2, nameFilter: (n) => n.includes('tree6') });
   if (treeParts) {
     for (const p of treeParts) {
-      if (p.mat && p.mat.transparent) { p.mat.alphaTest = 0.4; p.mat.transparent = false; p.mat.side = THREE.DoubleSide; }
+      if (p.mat && p.mat.transparent) {
+        p.mat.alphaTest = 0.08;
+        p.mat.transparent = false;
+        p.mat.side = THREE.DoubleSide;
+        p.mat.needsUpdate = true;
+      }
     }
   }
   const trunkG = new THREE.CylinderGeometry(0.18, 0.28, 3.2, 5); trunkG.translate(0, 1.6, 0);
@@ -882,7 +904,10 @@ $('tSpeed').addEventListener('input', (e) => {
   trafficState.speed = +e.target.value;
   $('tSpeedVal').textContent = `${trafficState.speed.toFixed(1)}x`;
 });
-$('tModel').addEventListener('change', (e) => { trafficState.modelMode = e.target.value; });
+$('tModel').addEventListener('change', (e) => {
+  trafficState.modelMode = e.target.value;
+  if (trafficState.modelMode !== 'all' && trafficState.modelMode !== 'lowpoly') ensureCarPool(trafficState.modelMode);
+});
 $('quality').addEventListener('change', (e) => applyQuality(e.target.value));
 $('basemap').addEventListener('change', (e) => {
   const mat = layers.terrain.userData.mat;
@@ -954,7 +979,7 @@ function frame(now) {
       const d = c.userData.center.distanceTo(camera.position);
       c.visible = d < tr + 700;
       if (c.visible && c.userData.hasNear) {
-        const useNear = d < 1350;
+        const useNear = d < 1200;
         c.userData.nearGrp.visible = useNear;
         c.userData.farGrp.visible = !useNear;
       }
@@ -966,7 +991,7 @@ function frame(now) {
     const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
     const tdt = trafficState.paused ? 0 : dt * trafficState.speed;
     const camY = camera.position.y - ground(camera.position.x, -camera.position.z);
-    const hasRealPool = realCarPools.volvo.meshes.length > 0 || realCarPools.mistra.meshes.length > 0;
+    const hasRealPool = Object.values(realCarPools).some((p) => p.meshes.length > 0);
     const useRealCars = hasRealPool && trafficState.modelMode !== 'lowpoly' && camY < 380;
     let frustum = null;
     if (useRealCars) {
@@ -1009,11 +1034,11 @@ function frame(now) {
     if (carMesh) {
       const activeN = trafficState.carCount;
       for (let i = 0; i < activeN; i++) carMesh.setMatrixAt(i, stepVehicle(carList[i], useRealCars, i));
-      for (const key of ['volvo', 'mistra']) for (const rm of realCarPools[key].meshes) { rm.count = 0; rm.visible = false; }
+      for (const key of Object.keys(realCarPools)) for (const rm of realCarPools[key].meshes) { rm.count = 0; rm.visible = false; }
       if (useRealCars && nearCars.length) {
         nearCars.sort((a, b) => a.d2 - b.d2);
         const cnt = Math.min(MAX_REAL_CARS, nearCars.length);
-        const counts = { volvo: 0, mistra: 0 };
+        const counts = Object.fromEntries(Object.keys(realCarPools).map((k) => [k, 0]));
         for (let k = 0; k < cnt; k++) {
           const nc = nearCars[k];
           let targetKey = trafficState.modelMode === 'all' ? nc.kind : trafficState.modelMode;
@@ -1025,7 +1050,7 @@ function frame(now) {
             for (const rm of pool.meshes) rm.setMatrixAt(slot, nc.mat);
           }
         }
-        for (const key of ['volvo', 'mistra']) {
+        for (const key of Object.keys(realCarPools)) {
           const c = counts[key];
           if (c > 0) for (const rm of realCarPools[key].meshes) { rm.count = c; rm.visible = true; rm.instanceMatrix.needsUpdate = true; }
         }
