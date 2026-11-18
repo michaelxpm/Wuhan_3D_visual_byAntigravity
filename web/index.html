@@ -30,6 +30,11 @@
   .qjump { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 6px; }
   .qjump button { background:rgba(255,255,255,.1); color:#dce8f2; border:1px solid rgba(255,255,255,.18); border-radius:4px; padding:2px 6px; font-size:11px; cursor:pointer; }
   .qjump button:hover { background:rgba(119,204,255,.28); border-color:#7cf; }
+  details.subtab { margin:6px 0; padding:4px 6px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:6px; }
+  details.subtab summary { cursor:pointer; font-weight:600; outline:none; }
+  details.subtab .subbody { margin-top:6px; }
+  #tPause { width:100%; margin-bottom:6px; padding:4px 8px; border-radius:4px; border:1px solid #4a6b82; background:#22384a; color:#e8eef4; cursor:pointer; font-size:12px; }
+  #tPause:hover { background:#2d4c66; }
 </style>
 </head>
 <body>
@@ -54,6 +59,22 @@
   <label><input type="checkbox" id="L_trees" checked> 树木 Trees</label>
   <label><input type="checkbox" id="L_rails" checked> 铁路/地铁 Rail</label>
   <label><input type="checkbox" id="L_traffic" checked> 交通车流 Traffic</label>
+  <details class="subtab" id="trafficTab">
+    <summary>车辆控制 Traffic Controls</summary>
+    <div class="subbody">
+      <button id="tPause" type="button">⏸ 暂停车流 Pause</button>
+      <label>车辆数量 Cars: <span id="tCarsVal">2400</span><input id="tCars" type="range" min="400" max="4000" step="200" value="2400"></label>
+      <label>行驶速度 Speed: <span id="tSpeedVal">1.0x</span><input id="tSpeed" type="range" min="0.2" max="3.0" step="0.2" value="1.0"></label>
+      <label>近景车辆模型 Car Models
+        <select id="tModel">
+          <option value="all" selected>混合真实模型 Mixed (Volvo + Mistra)</option>
+          <option value="volvo">Volvo V50</option>
+          <option value="mistra">Hyundai Mistra EV</option>
+          <option value="lowpoly">仅轻量模型 Low-Poly Only</option>
+        </select>
+      </label>
+    </div>
+  </details>
   <label><input type="checkbox" id="L_poi" checked> 地标 Labels</label>
   <div style="margin-top:4px;opacity:.8">地标直达 Landmarks</div>
   <div class="qjump" id="qjump"></div>

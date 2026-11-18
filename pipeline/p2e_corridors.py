@@ -90,16 +90,20 @@ for sid in order:
     # Walk forward and also try extending backward if two-way
     fwd = walk(sid, 0)
     total_len = sum(x["len"] for x in fwd)
-    if total_len >= 450:
+    if total_len >= 450 or (s["c"].endswith("_link") and total_len >= 80):
         # Pack into compact segments list: each sub-seg has [br, ly, flat_xy]
         corridors.append({
             "len": round(total_len, 1),
             "c": fwd[0]["c"],
+            "link": 1 if any(x["c"].endswith("_link") for x in fwd) else 0,
             "ow": s["ow"],
             "segs": [{"br": x["br"], "ly": x["ly"], "p": [round(v, 1) for pt in x["pts"] for v in pt]} for x in fwd]
         })
 
-corridors.sort(key=lambda c: -c["len"])
-corridors = corridors[:180]
+links = [c for c in corridors if c["link"]]
+mains = [c for c in corridors if not c["link"]]
+mains.sort(key=lambda c: -c["len"])
+links.sort(key=lambda c: -c["len"])
+corridors = mains[:160] + links[:140]
 json.dump(corridors, open(f"{P}/corridors.json", "w", encoding="utf8"), separators=(",", ":"))
-print(f"Saved {len(corridors)} corridors; longest={corridors[0]['len']}m, median={corridors[len(corridors)//2]['len']}m, total_kb={round(os.path.getsize(f'{P}/corridors.json')/1024,1)}")
+print(f"Saved {len(corridors)} corridors ({len(mains[:160])} main, {len(links[:140])} interchange links); longest={corridors[0]['len']}m, total_kb={round(os.path.getsize(f'{P}/corridors.json')/1024,1)}")
