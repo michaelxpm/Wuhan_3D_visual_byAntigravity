@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/examples/jsm/controls/MapControls.js';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,9 +52,13 @@ function ground(x, y) {
 }
 const W = (x, y, h) => new THREE.Vector3(x, h, -y); // local(east,north) -> three
 
-const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, satTex] = await Promise.all([
-  ...['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas'].map(J),
-  new THREE.TextureLoader().loadAsync(`${BASE}data/satellite.jpg`)
+const gltfLoader = new GLTFLoader();
+const loadGltf = (path) => gltfLoader.loadAsync(`${BASE}${path}`).catch(() => null);
+const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, corridors, satTex, busGltf, treeGltf] = await Promise.all([
+  ...['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas', 'corridors'].map(J),
+  new THREE.TextureLoader().loadAsync(`${BASE}data/satellite.jpg`),
+  loadGltf('models/bus/scene.gltf'),
+  loadGltf('models/tree/scene.gltf')
 ]);
 satTex.colorSpace = THREE.SRGBColorSpace;
 satTex.anisotropy = 8;
@@ -538,52 +543,193 @@ if (piers.length) {
   const m = mergeGeometries(geos, false); layers.roads.add(new THREE.Mesh(m, matBridgeSide));
 }
 
-// ------------------------------------------------------------------ animated traffic (cars on roads & flyovers)
-const cars = [];
+// ------------------------------------------------------------------ model helper & sculpted car
+function extractModelParts(gltfScene, { targetHeight, targetLength, nameFilter } = {}) {
+  if (!gltfScene) return null;
+  gltfScene.updateMatrixWorld(true);
+  const raw = [];
+  gltfScene.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    if (nameFilter && !nameFilter(o.name || '')) return;
+    const g = o.geometry.clone();
+    g.applyMatrix4(o.matrixWorld);
+    raw.push({ g, mat: o.material });
+  });
+  if (!raw.length) return null;
+  const box = new THREE.Box3();
+  for (const r of raw) { r.g.computeBoundingBox(); box.union(r.g.boundingBox); }
+  const sz = box.getSize(new THREE.Vector3());
+  const ctr = box.getCenter(new THREE.Vector3());
+  const rotateY90 = targetLength && sz.x > sz.z;
+  const curLen = rotateY90 ? sz.x : sz.z;
+  const sc = targetLength ? (targetLength / Math.max(0.001, curLen)) : (targetHeight / Math.max(0.001, sz.y));
+  const byMat = new Map();
+  for (const r of raw) {
+    r.g.translate(-ctr.x, -box.min.y, -ctr.z);
+    if (rotateY90) r.g.rotateY(Math.PI / 2);
+    r.g.scale(sc, sc, sc);
+    const gNon = r.g.index ? r.g.toNonIndexed() : r.g;
+    if (!gNon.attributes.normal) gNon.computeVertexNormals();
+    if (!byMat.has(r.mat)) byMat.set(r.mat, []);
+    byMat.get(r.mat).push(gNon);
+  }
+  const parts = [];
+  for (const [mat, list] of byMat) {
+    // Ensure identical attribute set before merging
+    const hasUv = list.every((g) => !!g.attributes.uv);
+    for (const g of list) {
+      if (!hasUv && g.attributes.uv) g.deleteAttribute('uv');
+      if (g.attributes.color) g.deleteAttribute('color');
+      if (g.attributes.tangent) g.deleteAttribute('tangent');
+    }
+    const merged = mergeGeometries(list, false);
+    if (merged) parts.push({ geo: merged, mat });
+  }
+  return parts.length ? parts : null;
+}
+
+function buildCarGeo() {
+  const parts = [];
+  const add = (g, colHex) => {
+    const ng = g.index ? g.toNonIndexed() : g;
+    ng.deleteAttribute('uv');
+    const n = ng.attributes.position.count;
+    const c = new THREE.Color(colHex);
+    const arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b; }
+    ng.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    parts.push(ng);
+  };
+  const body = new THREE.BoxGeometry(1.85, 0.72, 4.35); body.translate(0, 0.54, 0); add(body, 0xffffff);
+  const cabin = new THREE.BoxGeometry(1.56, 0.6, 2.15); cabin.translate(0, 1.15, -0.15); add(cabin, 0x33404d);
+  for (const [wx, wz] of [[-0.86, 1.32], [0.86, 1.32], [-0.86, -1.32], [0.86, -1.32]]) {
+    const wh = new THREE.CylinderGeometry(0.32, 0.32, 0.24, 8);
+    wh.rotateZ(Math.PI / 2); wh.translate(wx, 0.32, wz); add(wh, 0x1e2022);
+  }
+  return mergeGeometries(parts, false);
+}
+
+// Build continuous city-spanning corridors from corridors.json
+const longPaths = [];
+for (const cor of corridors) {
+  const pts3 = [];
+  let cumD = 0;
+  for (const seg of cor.segs) {
+    const raw = [];
+    for (let i = 0; i < seg.p.length; i += 2) raw.push([seg.p[i], seg.p[i + 1]]);
+    if (raw.length < 2) continue;
+    const dpts = densify(raw, 12);
+    const segLen = (() => { let d = 0; for (let i = 1; i < dpts.length; i++) d += Math.hypot(dpts[i][0] - dpts[i - 1][0], dpts[i][1] - dpts[i - 1][1]); return d; })();
+    const h0 = seg.br ? deckHeight(raw[0]) : 0;
+    const h1 = seg.br ? deckHeight(raw[raw.length - 1]) : 0;
+    let sd = 0;
+    for (let i = 0; i < dpts.length; i++) {
+      if (i > 0) {
+        const stepD = Math.hypot(dpts[i][0] - dpts[i - 1][0], dpts[i][1] - dpts[i - 1][1]);
+        sd += stepD; cumD += stepD;
+      }
+      if (pts3.length && i === 0) continue; // avoid duplicate joint vertex
+      let y;
+      if (seg.br) {
+        const t = segLen > 0 ? sd / segLen : 0;
+        const s = t * t * (3 - 2 * t);
+        y = Math.max(h0 + (h1 - h0) * s, ground(dpts[i][0], dpts[i][1]) + 0.25);
+      } else {
+        y = ground(dpts[i][0], dpts[i][1]) + 0.15;
+      }
+      pts3.push([dpts[i][0], y, -dpts[i][1], cumD]);
+    }
+  }
+  if (pts3.length >= 2 && cumD > 100) longPaths.push({ pts: pts3, len: cumD, ow: !!cor.ow });
+}
+
+// ------------------------------------------------------------------ animated traffic (long-distance cars & real buses)
+const vehicles = []; // { inst, idx, path, t, sp, dir, off, baseY }
+const carList = [], busParts = extractModelParts(busGltf?.scene, { targetLength: 10.2 });
 let carMesh = null;
-if (trafficPaths.length) {
-  const N_CARS = 450;
-  const carGeo = new THREE.BoxGeometry(1.9, 1.35, 4.2);
-  const carMat = new THREE.MeshStandardMaterial({ roughness: 0.4, metalness: 0.25 });
+const busMeshes = [];
+if (longPaths.length) {
+  const N_CARS = 1000;
+  const carGeo = buildCarGeo();
+  const carMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.3 });
   carMesh = new THREE.InstancedMesh(carGeo, carMat, N_CARS);
-  const CAR_COLS = [0xe8ecf0, 0x2c343d, 0x7b8694, 0xc43b33, 0x2c669e, 0xd9a834, 0x4b7862];
+  const CAR_COLS = [0xf2f4f7, 0x262c33, 0x7b8694, 0xc43b33, 0x2c669e, 0xd9a834, 0x4b7862, 0x8f9aa6];
   const c = new THREE.Color();
   for (let i = 0; i < N_CARS; i++) {
-    const pathIdx = i % trafficPaths.length;
-    const tp = trafficPaths[pathIdx];
+    const tp = longPaths[i % longPaths.length];
     const dir = tp.ow ? 1 : (i % 2 === 0 ? 1 : -1);
-    cars.push({ path: tp, t: (i * 0.6180339) % 1, sp: (10 + (i % 7) * 2.2) * dir, off: dir * 1.7 });
+    carList.push({ path: tp, t: (i * 0.6180339) % 1, sp: 11 + (i % 7) * 2.4, dir, off: dir * 1.9 });
     c.setHex(CAR_COLS[i % CAR_COLS.length]);
     carMesh.setColorAt(i, c);
   }
   carMesh.instanceColor.needsUpdate = true;
   carMesh.frustumCulled = false;
   layers.traffic.add(carMesh);
+
+  // Real city buses from models/bus/scene.gltf
+  const N_BUS = 160;
+  const busRoutes = longPaths.slice(0, Math.min(80, longPaths.length));
+  if (busParts && busRoutes.length) {
+    for (const part of busParts) {
+      const bm = new THREE.InstancedMesh(part.geo, part.mat, N_BUS);
+      bm.frustumCulled = false;
+      layers.traffic.add(bm);
+      busMeshes.push(bm);
+    }
+  } else {
+    const fbGeo = new THREE.BoxGeometry(2.5, 3.0, 10.2); fbGeo.translate(0, 1.5, 0);
+    const fb = new THREE.InstancedMesh(fbGeo, new THREE.MeshStandardMaterial({ color: 0x2f7d5b, roughness: 0.5 }), N_BUS);
+    fb.frustumCulled = false; layers.traffic.add(fb); busMeshes.push(fb);
+  }
+  for (let i = 0; i < N_BUS; i++) {
+    const tp = busRoutes[i % busRoutes.length];
+    const dir = tp.ow ? 1 : (i % 2 === 0 ? 1 : -1);
+    vehicles.push({ path: tp, t: (i * 0.381966) % 1, sp: 8.5 + (i % 4) * 1.3, dir, off: dir * 2.2 });
+  }
 }
 
-// ------------------------------------------------------------------ trees (instanced, chunked)
+// ------------------------------------------------------------------ trees (2-LOD: real glTF near camera, lightweight far)
 {
+  const treeParts = extractModelParts(treeGltf?.scene, { targetHeight: 7.2, nameFilter: (n) => n.includes('tree6') });
+  if (treeParts) {
+    for (const p of treeParts) {
+      if (p.mat && p.mat.transparent) { p.mat.alphaTest = 0.4; p.mat.transparent = false; p.mat.side = THREE.DoubleSide; }
+    }
+  }
   const trunkG = new THREE.CylinderGeometry(0.18, 0.28, 3.2, 5); trunkG.translate(0, 1.6, 0);
   const crownG = new THREE.IcosahedronGeometry(2.4, 0); crownG.translate(0, 5.0, 0); crownG.scale(1, 1.15, 1);
-  const trunkM = new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 1 });
-  const crownM = new THREE.MeshStandardMaterial({ color: 0x4f8a43, roughness: 0.9, flatShading: true });
+  const farParts = [
+    { geo: trunkG, mat: new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 1 }) },
+    { geo: crownG, mat: new THREE.MeshStandardMaterial({ color: 0x4f8a43, roughness: 0.9, flatShading: true }) }
+  ];
+
   const all = [...trees1.map((t) => ({ x: t.x, y: t.y, s: 1 })), ...trees2];
   const map = new Map();
   for (const t of all) { const k = cellKey(t.x, t.y); if (!map.has(k)) map.set(k, []); map.get(k).push(t); }
   const dummy = new THREE.Object3D();
   layers.trees.userData.chunks = [];
   for (const [, list] of map) {
-    const tm = new THREE.InstancedMesh(trunkG, trunkM, list.length), cm = new THREE.InstancedMesh(crownG, crownM, list.length);
-    const col = new THREE.Color();
+    const farMeshes = farParts.map((mp) => new THREE.InstancedMesh(mp.geo, mp.mat, list.length));
+    const nearMeshes = treeParts ? treeParts.map((mp) => new THREE.InstancedMesh(mp.geo, mp.mat, list.length)) : null;
     list.forEach((t, i) => {
-      const gy = ground(t.x, t.y); if (gy <= wl + 0.4) { dummy.scale.setScalar(0.0001); } else dummy.scale.setScalar(t.s * (0.9 + hashStr('' + t.x + t.y) * 0.4));
-      dummy.position.set(t.x, gy, -t.y); dummy.rotation.y = hashStr('r' + t.x) * 6.28; dummy.updateMatrix(); tm.setMatrixAt(i, dummy.matrix); cm.setMatrixAt(i, dummy.matrix);
-      col.setHSL(0.27 + (hashStr('c' + t.y) - 0.5) * 0.06, 0.38, 0.28 + hashStr('l' + t.x) * 0.12); cm.setColorAt(i, col);
+      const gy = ground(t.x, t.y);
+      if (gy <= wl + 0.4) dummy.scale.setScalar(0.0001);
+      else dummy.scale.setScalar(t.s * (0.85 + hashStr('' + t.x + t.y) * 0.4));
+      dummy.position.set(t.x, gy, -t.y);
+      dummy.rotation.y = hashStr('r' + t.x) * 6.28;
+      dummy.updateMatrix();
+      for (const im of farMeshes) im.setMatrixAt(i, dummy.matrix);
+      if (nearMeshes) for (const im of nearMeshes) im.setMatrixAt(i, dummy.matrix);
     });
-    cm.instanceColor.needsUpdate = true;
-    const cx = list[0].x, cy = list[0].y;
-    const grp = new THREE.Group(); grp.add(tm, cm); grp.userData.center = new THREE.Vector3(cx, 0, -cy);
-    tm.castShadow = cm.castShadow = false; tm.frustumCulled = cm.frustumCulled = false;
+    let sx = 0, sy = 0;
+    for (const t of list) { sx += t.x; sy += t.y; }
+    const cx = sx / list.length, cy = sy / list.length;
+    const grp = new THREE.Group();
+    const farGrp = new THREE.Group(); for (const im of farMeshes) { im.castShadow = false; im.frustumCulled = false; farGrp.add(im); }
+    const nearGrp = new THREE.Group(); if (nearMeshes) { for (const im of nearMeshes) { im.castShadow = false; im.frustumCulled = false; nearGrp.add(im); } }
+    nearGrp.visible = false;
+    grp.add(farGrp, nearGrp);
+    grp.userData = { center: new THREE.Vector3(cx, 0, -cy), farGrp, nearGrp, hasNear: !!nearMeshes };
     layers.trees.add(grp); layers.trees.userData.chunks.push(grp);
   }
 }
@@ -724,7 +870,7 @@ function applyQuality(q) {
   renderer.shadowMap.enabled = q !== 'low'; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   sun.castShadow = q !== 'low'; sun.shadow.mapSize.set(q === 'high' ? 4096 : 2048, q === 'high' ? 4096 : 2048);
   const sc = sun.shadow.camera; sc.left = sc.bottom = -700; sc.right = sc.top = 700; sc.near = 10; sc.far = 4000; sc.updateProjectionMatrix();
-  layers.trees.userData.range = q === 'low' ? 1200 : q === 'med' ? 2200 : 3500;
+  layers.trees.userData.range = q === 'low' ? 800 : q === 'med' ? 1400 : 2200;
   layers.poi.userData.range = 4500;
   scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
 }
@@ -759,31 +905,58 @@ function frame(now) {
   const dir = sun.userData.dir || new THREE.Vector3(0.5, 0.8, -0.3);
   const ctr = fp ? camera.position : controls.target;
   sun.position.copy(ctr).addScaledVector(dir, 1500); sun.target.position.copy(ctr); sun.target.updateMatrixWorld();
-  // tree distance culling
-  const tr = layers.trees.userData.range || 2000;
-  if (layers.trees.visible) for (const c of layers.trees.userData.chunks) { c.visible = c.userData.center.distanceTo(camera.position) < tr + 700; }
-  // animated traffic update
-  if (carMesh && layers.traffic.visible) {
+  // tree distance culling + 2-LOD switch (real glTF near camera, low-poly far)
+  const tr = layers.trees.userData.range || 1400;
+  if (layers.trees.visible) {
+    for (const c of layers.trees.userData.chunks) {
+      const d = c.userData.center.distanceTo(camera.position);
+      c.visible = d < tr + 700;
+      if (c.visible && c.userData.hasNear) {
+        const useNear = d < 1350;
+        c.userData.nearGrp.visible = useNear;
+        c.userData.farGrp.visible = !useNear;
+      }
+    }
+  }
+  // animated traffic update (cars + buses along continuous corridors)
+  if (layers.traffic.visible && (carMesh || busMeshes.length)) {
     const dummy = new THREE.Object3D();
-    for (let i = 0; i < cars.length; i++) {
-      const ca = cars[i], tp = ca.path;
-      ca.t = (ca.t + (ca.sp * dt) / tp.len + 1) % 1;
-      const targetD = ca.t * tp.len;
+    const stepVehicle = (v) => {
+      const tp = v.path;
+      v.t += (v.sp * v.dir * dt) / tp.len;
+      if (v.t >= 1) {
+        if (tp.ow) v.t -= 1;
+        else { v.t = 1 - (v.t - 1); v.dir *= -1; v.off = -v.off; }
+      } else if (v.t < 0) {
+        if (tp.ow) v.t += 1;
+        else { v.t = -v.t; v.dir *= -1; v.off = -v.off; }
+      }
+      const targetD = v.t * tp.len;
       const pts = tp.pts;
-      let idx = 0;
-      while (idx < pts.length - 2 && pts[idx + 1][3] < targetD) idx++;
-      const a = pts[idx], b = pts[idx + 1];
+      let lo = 0, hi = pts.length - 2;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (pts[mid][3] <= targetD) lo = mid; else hi = mid - 1; }
+      const a = pts[lo], b = pts[lo + 1];
       const segL = Math.max(0.01, b[3] - a[3]);
       const f = (targetD - a[3]) / segL;
       const dx = b[0] - a[0], dz = b[2] - a[2];
       const l = Math.hypot(dx, dz) || 1;
       const nx = -dz / l, nz = dx / l;
-      dummy.position.set(a[0] + dx * f + nx * ca.off, a[1] + (b[1] - a[1]) * f, a[2] + dz * f + nz * ca.off);
-      dummy.rotation.set(0, Math.atan2(dx * Math.sign(ca.sp), dz * Math.sign(ca.sp)), 0);
+      dummy.position.set(a[0] + dx * f + nx * v.off, a[1] + (b[1] - a[1]) * f, a[2] + dz * f + nz * v.off);
+      dummy.rotation.set(0, Math.atan2(dx * v.dir, dz * v.dir), 0);
       dummy.updateMatrix();
-      carMesh.setMatrixAt(i, dummy.matrix);
+      return dummy.matrix;
+    };
+    if (carMesh) {
+      for (let i = 0; i < carList.length; i++) carMesh.setMatrixAt(i, stepVehicle(carList[i]));
+      carMesh.instanceMatrix.needsUpdate = true;
     }
-    carMesh.instanceMatrix.needsUpdate = true;
+    if (busMeshes.length) {
+      for (let i = 0; i < vehicles.length; i++) {
+        const mat = stepVehicle(vehicles[i]);
+        for (const bm of busMeshes) bm.setMatrixAt(i, mat);
+      }
+      for (const bm of busMeshes) bm.instanceMatrix.needsUpdate = true;
+    }
   }
   for (const s of layers.poi.children) {
     const d = camera.position.distanceTo(s.position);
