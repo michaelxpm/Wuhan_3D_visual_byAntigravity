@@ -349,9 +349,36 @@ trees = dump_points("trees_osm", load("trees"), lambda t: t.get("species") or "t
 dump_points("pois", load("pois"), lambda t: t.get("amenity") or t.get("shop") or t.get("tourism") or t.get("historic") or t.get("place") or "poi", ("name", "name:en"))
 dump_points("infra", load("node_infra"), lambda t: t.get("highway") or t.get("railway") or t.get("public_transport") or t.get("power") or t.get("barrier") or "infra", ("name",))
 
-# synthetic trees: parks / woods (marked synthetic)
+# Spatial clearance index: never place synthetic trees on roads or inside buildings
+road_bufs = []
+for r in roads:
+    if r.get("tn"): continue
+    try:
+        ln = LineString(list(zip(r["p"][0::2], r["p"][1::2])))
+        road_bufs.append(ln.buffer(r["w"] / 2 + 1.4, cap_style=2))
+    except Exception: pass
+road_tree = STRtree(road_bufs) if road_bufs else None
+
+bld_polys = []
+for b in buildings:
+    try:
+        bld_polys.append(Polygon(list(zip(b["o"][0::2], b["o"][1::2]))))
+    except Exception: pass
+bld_tree = STRtree(bld_polys) if bld_polys else None
+
+def is_clear_for_tree(x, y):
+    pt = Point(x, y)
+    if road_tree is not None:
+        for i in road_tree.query(pt):
+            if road_bufs[i].contains(pt): return False
+    if bld_tree is not None:
+        for i in bld_tree.query(pt):
+            if bld_polys[i].contains(pt): return False
+    return True
+
+# synthetic trees: parks / woods / grass strips (marked synthetic)
 syn = []
-dens = {"wood": 1 / 80, "forest": 1 / 80, "scrub": 1 / 200, "park": 1 / 250, "garden": 1 / 300, "grass": 0, "meadow": 0}
+dens = {"wood": 1 / 75, "forest": 1 / 75, "scrub": 1 / 160, "park": 1 / 200, "garden": 1 / 240, "grass": 1 / 450, "meadow": 1 / 500}
 for gdict in green:
     d = dens.get(gdict["k"], 0)
     if d <= 0: continue
@@ -364,14 +391,14 @@ for gdict in green:
         while k < n and tries < n * 6:
             tries += 1
             x, y = random.uniform(minx, maxx), random.uniform(miny, maxy)
-            if pp.contains(Point(x, y)):
+            if pp.contains(Point(x, y)) and is_clear_for_tree(x, y):
                 syn.append({"x": rd(x, 1), "y": rd(y, 1), "s": round(random.uniform(0.75, 1.3), 2)}); k += 1
     except Exception: pass
-# street trees along residential-ish roads (synthetic), spacing 18 m
+# street trees along roads (offset onto roadside green strip, 14m spacing, strictly road-clear)
 for r in roads:
     if r["c"] in ("primary", "secondary", "tertiary", "residential", "trunk", "unclassified") and not r.get("br") and not r.get("tn"):
         ln = LineString(list(zip(r["p"][0::2], r["p"][1::2])))
-        off = r["w"] / 2 + 1.5
+        off = r["w"] / 2 + 2.4
         for side in (1, -1):
             try:
                 oc = ln.parallel_offset(off, "left" if side == 1 else "right", join_style=2)
@@ -379,14 +406,15 @@ for r in roads:
             for seg in (oc.geoms if hasattr(oc, "geoms") else [oc]):
                 if seg.geom_type != "LineString": continue
                 L = seg.length
-                d = random.uniform(0, 18)
+                d = random.uniform(0, 14)
                 while d < L:
                     pt = seg.interpolate(d)
-                    syn.append({"x": rd(pt.x, 1), "y": rd(pt.y, 1), "s": round(random.uniform(0.7, 1.1), 2)})
-                    d += 18
-            if len(syn) > 120000: break
+                    if is_clear_for_tree(pt.x, pt.y):
+                        syn.append({"x": rd(pt.x, 1), "y": rd(pt.y, 1), "s": round(random.uniform(0.75, 1.15), 2)})
+                    d += 14
+            if len(syn) > 150000: break
 json.dump(syn, open(f"{OUT}/trees_synthetic.json", "w"), separators=(",", ":"))
-print("synthetic trees", len(syn))
+print("synthetic trees (road-clear)", len(syn))
 
 meta = {"origin_lonlat": [OLON, OLAT], "origin_utm50n": [ox, oy], "terrain": terrain_meta,
         "region_bounds": list(region.bounds), "view_bounds": list(view_region.bounds),

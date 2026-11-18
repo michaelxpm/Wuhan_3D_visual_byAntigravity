@@ -9,7 +9,15 @@
   html, body { margin:0; height:100%; overflow:hidden; background:#9fb7c8; font-family: "Microsoft YaHei", system-ui, sans-serif; }
   #app { position:fixed; inset:0; }
   #hud { position:fixed; left:12px; top:12px; width:260px; max-height:calc(100vh - 48px); overflow-y:auto; background:rgba(20,28,38,.82); color:#e8eef4; padding:10px 12px; border-radius:8px; font-size:12px; line-height:1.55; backdrop-filter: blur(4px); user-select:none; }
-  #hud h1 { font-size:14px; margin:0 0 6px; }
+  #hud.collapsed { width:auto; padding:6px 10px; overflow:visible; }
+  #hud.collapsed #hudBody { display:none; }
+  .hud-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  #hud.collapsed .hud-head { margin-bottom:0; }
+  #hud h1 { font-size:14px; margin:0; }
+  .hud-head { margin-bottom:6px; }
+  #hudToggle { background:rgba(255,255,255,.12); color:#e8eef4; border:1px solid rgba(255,255,255,.22); border-radius:4px; padding:1px 7px; font-size:12px; line-height:1.4; cursor:pointer; }
+  #hudToggle:hover { background:rgba(119,204,255,.28); border-color:#7cf; }
+  @media (max-width: 640px) { #hint { display:none; } #attr { font-size:10px; } }
   #hud label { display:block; cursor:pointer; }
   #hud input[type=range] { width:100%; }
   #hud select, #hud input[type=text] { width:100%; box-sizing:border-box; margin:2px 0 6px; padding:3px 5px; border-radius:4px; border:1px solid #456; background:#19232e; color:#e8eef4; }
@@ -22,13 +30,22 @@
   .qjump { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 6px; }
   .qjump button { background:rgba(255,255,255,.1); color:#dce8f2; border:1px solid rgba(255,255,255,.18); border-radius:4px; padding:2px 6px; font-size:11px; cursor:pointer; }
   .qjump button:hover { background:rgba(119,204,255,.28); border-color:#7cf; }
+  details.subtab { margin:6px 0; padding:4px 6px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12); border-radius:6px; }
+  details.subtab summary { cursor:pointer; font-weight:600; outline:none; }
+  details.subtab .subbody { margin-top:6px; }
+  #tPause { width:100%; margin-bottom:6px; padding:4px 8px; border-radius:4px; border:1px solid #4a6b82; background:#22384a; color:#e8eef4; cursor:pointer; font-size:12px; }
+  #tPause:hover { background:#2d4c66; }
 </style>
 </head>
 <body>
 <div id="loading"><div>武昌区 3D 地图加载中…</div><div id="lmsg" style="font-size:12px;opacity:.7"></div></div>
 <div id="app"></div>
 <div id="hud">
-  <h1>武昌区 3D · Wuchang</h1>
+  <div class="hud-head">
+    <h1>武昌区 3D · Wuchang</h1>
+    <button id="hudToggle" type="button" title="收起/展开面板">－</button>
+  </div>
+  <div id="hudBody">
   <label>画质 Quality
     <select id="quality"><option value="low">低 Low</option><option value="med" selected>中 Medium</option><option value="high">高 High</option></select>
   </label>
@@ -42,12 +59,33 @@
   <label><input type="checkbox" id="L_trees" checked> 树木 Trees</label>
   <label><input type="checkbox" id="L_rails" checked> 铁路/地铁 Rail</label>
   <label><input type="checkbox" id="L_traffic" checked> 交通车流 Traffic</label>
+  <details class="subtab" id="trafficTab">
+    <summary>车辆控制 Traffic Controls</summary>
+    <div class="subbody">
+      <button id="tPause" type="button">⏸ 暂停车流 Pause</button>
+      <label>车辆数量 Cars: <span id="tCarsVal">2400</span><input id="tCars" type="range" min="400" max="4000" step="200" value="2400"></label>
+      <label>行驶速度 Speed: <span id="tSpeedVal">1.0x</span><input id="tSpeed" type="range" min="0.2" max="3.0" step="0.2" value="1.0"></label>
+      <label>近景车辆模型 Car Models
+        <select id="tModel">
+          <option value="all" selected>混合真实模型 Mixed (All 6 Models)</option>
+          <option value="volvo">Volvo V50</option>
+          <option value="mistra">Hyundai Mistra EV</option>
+          <option value="porsche">Porsche Panamera Turbo</option>
+          <option value="kona">Hyundai Kona EV</option>
+          <option value="xc60">Volvo XC60</option>
+          <option value="gle">Mercedes-Benz GLE</option>
+          <option value="lowpoly">仅轻量模型 Low-Poly Only</option>
+        </select>
+      </label>
+    </div>
+  </details>
   <label><input type="checkbox" id="L_poi" checked> 地标 Labels</label>
   <div style="margin-top:4px;opacity:.8">地标直达 Landmarks</div>
   <div class="qjump" id="qjump"></div>
   <input type="text" id="search" placeholder="搜索地名 Search…" />
   <div id="results"></div>
   <div id="stats" style="opacity:.75;margin-top:4px"></div>
+  </div>
 </div>
 <div id="info"></div>
 <div id="hint">左键旋转 · 右键平移 · 滚轮缩放 · 点击建筑查看信息 · <b>F</b> 第一人称 (WASD, Shift 加速, Esc 退出)</div>

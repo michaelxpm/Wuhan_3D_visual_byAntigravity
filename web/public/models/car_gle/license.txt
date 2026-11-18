@@ -1,0 +1,11 @@
+Model Information:
+* title:	Mercedes-Benz GLE 2027
+* source:	https://sketchfab.com/3d-models/mercedes-benz-gle-2027-905a3c541e4e405eaeead41a4deb28b6
+* author:	BMW'S Lost Proxy (https://sketchfab.com/Bmws_Lost_Proxy)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Mercedes-Benz GLE 2027" (https://sketchfab.com/3d-models/mercedes-benz-gle-2027-905a3c541e4e405eaeead41a4deb28b6) by BMW'S Lost Proxy (https://sketchfab.com/Bmws_Lost_Proxy) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
