@@ -54,11 +54,12 @@ const W = (x, y, h) => new THREE.Vector3(x, h, -y); // local(east,north) -> thre
 
 const gltfLoader = new GLTFLoader();
 const loadGltf = (path) => gltfLoader.loadAsync(`${BASE}${path}`).catch(() => null);
-const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, corridors, satTex, busGltf, treeGltf] = await Promise.all([
+const [buildings, roads, water, green, landuse, rails, trees1, trees2, pois, waterways, structures, otherAreas, corridors, satTex, busGltf, treeGltf, carGltf] = await Promise.all([
   ...['buildings', 'roads', 'water', 'green', 'landuse', 'rails', 'trees_osm', 'trees_synthetic', 'pois', 'waterways', 'structures', 'other_areas', 'corridors'].map(J),
   new THREE.TextureLoader().loadAsync(`${BASE}data/satellite.jpg`),
   loadGltf('models/bus/scene.gltf'),
-  loadGltf('models/tree/scene.gltf')
+  loadGltf('models/tree/scene.gltf'),
+  loadGltf('models/car/scene.gltf')
 ]);
 satTex.colorSpace = THREE.SRGBColorSpace;
 satTex.anisotropy = 8;
@@ -644,12 +645,14 @@ for (const cor of corridors) {
 }
 
 // ------------------------------------------------------------------ animated traffic (long-distance cars & real buses)
-const vehicles = []; // { inst, idx, path, t, sp, dir, off, baseY }
+const vehicles = [];
 const carList = [], busParts = extractModelParts(busGltf?.scene, { targetLength: 10.2 });
+const realCarParts = extractModelParts(carGltf?.scene, { targetLength: 4.5, nameFilter: (n) => !n.includes('interiour') && !n.includes('steeringwheel') });
 let carMesh = null;
-const busMeshes = [];
+const busMeshes = [], realCarMeshes = [];
+const MAX_REAL_CARS = 28;
 if (longPaths.length) {
-  const N_CARS = 1000;
+  const N_CARS = 2000;
   const carGeo = buildCarGeo();
   const carMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.35, metalness: 0.3 });
   carMesh = new THREE.InstancedMesh(carGeo, carMat, N_CARS);
@@ -665,6 +668,16 @@ if (longPaths.length) {
   carMesh.instanceColor.needsUpdate = true;
   carMesh.frustumCulled = false;
   layers.traffic.add(carMesh);
+
+  if (realCarParts) {
+    for (const part of realCarParts) {
+      const rm = new THREE.InstancedMesh(part.geo, part.mat, MAX_REAL_CARS);
+      rm.count = 0;
+      rm.frustumCulled = false;
+      layers.traffic.add(rm);
+      realCarMeshes.push(rm);
+    }
+  }
 
   // Real city buses from models/bus/scene.gltf
   const N_BUS = 160;
@@ -918,10 +931,20 @@ function frame(now) {
       }
     }
   }
-  // animated traffic update (cars + buses along continuous corridors)
+  // animated traffic update (2000 cars + 160 buses; swap up to 28 close on-screen cars to real glTF model)
   if (layers.traffic.visible && (carMesh || busMeshes.length)) {
     const dummy = new THREE.Object3D();
-    const stepVehicle = (v) => {
+    const zeroMat = new THREE.Matrix4().makeScale(0, 0, 0);
+    const camY = camera.position.y - ground(camera.position.x, -camera.position.z);
+    const useRealCars = realCarMeshes.length > 0 && camY < 380;
+    let frustum = null;
+    if (useRealCars) {
+      camera.updateMatrixWorld();
+      const projMat = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum = new THREE.Frustum().setFromProjectionMatrix(projMat);
+    }
+    const nearCars = [];
+    const stepVehicle = (v, collectNear, idx) => {
       const tp = v.path;
       v.t += (v.sp * v.dir * dt) / tp.len;
       if (v.t >= 1) {
@@ -944,15 +967,34 @@ function frame(now) {
       dummy.position.set(a[0] + dx * f + nx * v.off, a[1] + (b[1] - a[1]) * f, a[2] + dz * f + nz * v.off);
       dummy.rotation.set(0, Math.atan2(dx * v.dir, dz * v.dir), 0);
       dummy.updateMatrix();
+      if (collectNear && frustum) {
+        const d2 = dummy.position.distanceToSquared(camera.position);
+        if (d2 < 240 * 240 && frustum.containsPoint(dummy.position)) {
+          nearCars.push({ idx, d2, mat: dummy.matrix.clone() });
+        }
+      }
       return dummy.matrix;
     };
     if (carMesh) {
-      for (let i = 0; i < carList.length; i++) carMesh.setMatrixAt(i, stepVehicle(carList[i]));
+      for (let i = 0; i < carList.length; i++) carMesh.setMatrixAt(i, stepVehicle(carList[i], useRealCars, i));
+      if (realCarMeshes.length) {
+        if (useRealCars && nearCars.length) {
+          nearCars.sort((a, b) => a.d2 - b.d2);
+          const cnt = Math.min(MAX_REAL_CARS, nearCars.length);
+          for (let k = 0; k < cnt; k++) {
+            carMesh.setMatrixAt(nearCars[k].idx, zeroMat);
+            for (const rm of realCarMeshes) rm.setMatrixAt(k, nearCars[k].mat);
+          }
+          for (const rm of realCarMeshes) { rm.count = cnt; rm.visible = true; rm.instanceMatrix.needsUpdate = true; }
+        } else {
+          for (const rm of realCarMeshes) { rm.count = 0; rm.visible = false; }
+        }
+      }
       carMesh.instanceMatrix.needsUpdate = true;
     }
     if (busMeshes.length) {
       for (let i = 0; i < vehicles.length; i++) {
-        const mat = stepVehicle(vehicles[i]);
+        const mat = stepVehicle(vehicles[i], false, i);
         for (const bm of busMeshes) bm.setMatrixAt(i, mat);
       }
       for (const bm of busMeshes) bm.instanceMatrix.needsUpdate = true;
