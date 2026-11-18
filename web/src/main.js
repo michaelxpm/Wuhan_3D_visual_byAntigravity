@@ -687,6 +687,13 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 });
 
 // ------------------------------------------------------------------ UI
+function setHudCollapsed(collapsed) {
+  $('hud').classList.toggle('collapsed', collapsed);
+  $('hudToggle').textContent = collapsed ? '展开 +' : '－';
+}
+$('hudToggle').addEventListener('click', () => setHudCollapsed(!$('hud').classList.contains('collapsed')));
+if (innerWidth < 640) setHudCollapsed(true);
+
 for (const k of ['buildings', 'roads', 'water', 'trees', 'rails', 'traffic', 'poi']) $('L_' + k).addEventListener('change', (e) => (layers[k].visible = e.target.checked));
 $('quality').addEventListener('change', (e) => applyQuality(e.target.value));
 $('basemap').addEventListener('change', (e) => {
